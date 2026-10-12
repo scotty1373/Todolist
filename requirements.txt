@@ -1,0 +1,5 @@
+flask>=3.0.0
+rich>=13.0.0
+win10toast-click>=0.1.2
+windows-toasts>=1.3
+python-dateutil>=2.8.0

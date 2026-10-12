@@ -1,0 +1,24 @@
+[project]
+name = "todo-tool"
+version = "1.0.0"
+description = "A CLI and Web based TodoList tool with Windows notifications"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your@email.com"}
+]
+dependencies = [
+    "flask>=3.0.0",
+    "rich>=13.0.0",
+    "win10toast-click>=0.1.2",
+    "windows-toasts>=1.3",
+    "python-dateutil>=2.8.0",
+]
+
+[project.scripts]
+todo = "main:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
