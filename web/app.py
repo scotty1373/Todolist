@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from todo.models import Task, Priority, TaskStatus
 from todo.storage import TaskStorage
 from todo.reminder import ReminderService
-from todo.utils import parse_time, format_datetime, format_time_window, get_relative_time, validate_time_window
+from todo.utils import parse_time, format_datetime, format_time_window, get_relative_time
 
 
 def _format_task(task: Task) -> dict:
@@ -152,10 +152,11 @@ def create_app(storage: TaskStorage = None, start_reminder: bool = True) -> Flas
             except ValueError as e:
                 return jsonify({"error": f"结束时间格式错误: {str(e)}"}), 400
 
-        # Validate and adjust time window (handle cross-day scenarios)
-        start_time, end_time, error = validate_time_window(start_time, end_time)
-        if error:
-            return jsonify({"error": error}), 400
+        # 与编辑端点一致的校验：仅要求结束晚于开始，不做自动平移。
+        # Web 界面显式选择日期，用户选过去的时间就是想要过去的时间；
+        # 跨天由用户在日期控件里显式选择。
+        if start_time and end_time and end_time <= start_time:
+            return jsonify({"error": "结束时间必须晚于开始时间"}), 400
 
         task = Task(
             name=name,

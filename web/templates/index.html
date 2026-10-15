@@ -883,113 +883,6 @@
             color: var(--text-secondary);
         }
 
-        /* 滚筒时间选择器 */
-        .wheel-picker {
-            position: relative;
-            display: flex;
-            gap: 4px;
-            height: 160px;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            background: var(--bg-input);
-            overflow: hidden;
-            contain: paint;
-        }
-
-        .wheel-highlight {
-            position: absolute;
-            left: 4px;
-            right: 4px;
-            top: 64px;  /* (160 - 32) / 2，居中选中行 */
-            height: 32px;
-            background: var(--accent-light);
-            border-radius: 8px;
-            pointer-events: none;
-        }
-
-        /* 顶/底渐隐遮罩：边界处留白看起来是有意的层次，而不是缺内容 */
-        .wheel-picker::before,
-        .wheel-picker::after {
-            content: '';
-            position: absolute;
-            left: 4px;
-            right: 4px;
-            height: 28px;
-            z-index: 2;
-            pointer-events: none;
-            transform: translateZ(0);  /* 独立合成层，滚动时不参与重绘 */
-        }
-
-        .wheel-picker::before {
-            top: 0;
-            background: linear-gradient(to bottom, var(--bg-input), transparent);
-        }
-
-        .wheel-picker::after {
-            bottom: 0;
-            background: linear-gradient(to top, var(--bg-input), transparent);
-        }
-
-        .wheel-col {
-            flex: 1;
-            overflow-y: auto;
-            scroll-snap-type: y mandatory;
-            overscroll-behavior: contain;  /* 滚到头不联动弹窗表单滚动 */
-            will-change: scroll-position;  /* 滚动走合成器，不逐帧重排 */
-            scrollbar-width: none;
-            position: relative;
-            z-index: 1;
-        }
-
-        .wheel-col::-webkit-scrollbar {
-            display: none;
-        }
-
-        .wheel-col.date {
-            flex: 1.6;
-        }
-
-        .wheel-item {
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            scroll-snap-align: center;
-            font-size: 14px;
-            color: var(--text-muted);
-            cursor: pointer;
-            user-select: none;
-        }
-
-        /* 首尾占位行：替代原 64px padding，让选中项始终居中且上下视觉平衡 */
-        .wheel-ghost {
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .wheel-ghost::before {
-            content: '';
-            width: 28px;
-            height: 2px;
-            border-radius: 1px;
-            background: var(--border);
-        }
-
-        .wheel-col {
-            cursor: grab;
-        }
-
-        .wheel-col.dragging {
-            cursor: grabbing;
-        }
-
-        .wheel-item.active {
-            color: var(--text);
-            font-weight: 600;
-        }
-
         /* 优先级颜色分段按钮 */
         .priority-segment {
             display: flex;
@@ -1424,20 +1317,22 @@
             </div>
             <div class="form-group">
                 <label>开始时间</label>
-                <div class="wheel-picker">
-                    <div class="wheel-highlight"></div>
-                    <div class="wheel-col date" id="startWheelDate"></div>
-                    <div class="wheel-col" id="startWheelHour"></div>
-                    <div class="wheel-col" id="startWheelMinute"></div>
+                <input type="date" id="addStartDate">
+                <div class="time-picker-row">
+                    <select id="addStartHour"></select>
+                    <span class="time-separator">:</span>
+                    <select id="addStartMinute"></select>
+                    <button class="btn-clear-time" onclick="clearAddTime('start'); onAddStartChange();">清除</button>
                 </div>
             </div>
             <div class="form-group">
                 <label>结束时间</label>
-                <div class="wheel-picker">
-                    <div class="wheel-highlight"></div>
-                    <div class="wheel-col date" id="endWheelDate"></div>
-                    <div class="wheel-col" id="endWheelHour"></div>
-                    <div class="wheel-col" id="endWheelMinute"></div>
+                <input type="date" id="addEndDate">
+                <div class="time-picker-row">
+                    <select id="addEndHour"></select>
+                    <span class="time-separator">:</span>
+                    <select id="addEndMinute"></select>
+                    <button class="btn-clear-time" onclick="onAddEndClear()">清除</button>
                 </div>
             </div>
             <div class="form-group">
@@ -1678,7 +1573,7 @@
             renderTaskList();
             renderTimeline();
             setupFilterButtons();
-            initWheelPickers();
+            initAddTimePickers();
             initPrioritySegment();
             initTagSelector();
             initKnownTags();
@@ -1691,21 +1586,37 @@
             });
         });
 
-        // ========== 滚筒时间选择器 ==========
+        // ========== 时间选择控件（添加/编辑弹窗共用：日期 + 时/分下拉）==========
 
-        // 结束时间是否被用户手动滚动过（未动过则跟随开始时间 +1 小时）
-        let endWheelDirty = false;
+        // 时/分下拉选项：时 00-24，分 5 分钟步进
+        function buildTimeSelects(hourId, minuteId) {
+            const hSel = document.getElementById(hourId);
+            const mSel = document.getElementById(minuteId);
+            for (let h = 0; h <= 24; h++) {
+                const o = document.createElement('option');
+                o.value = h;
+                o.textContent = h.toString().padStart(2, '0');
+                hSel.appendChild(o);
+            }
+            for (let m = 0; m < 60; m += 5) {
+                const o = document.createElement('option');
+                o.value = m;
+                o.textContent = m.toString().padStart(2, '0');
+                mSel.appendChild(o);
+            }
+        }
 
-        const startWheelState = { date: '', hour: 0, minute: 0 };
-        const endWheelState = { date: '', hour: 1, minute: 0 };
-        const wheelRefs = {};
-        let wheelDateItems = [];
-
-        // 默认开始时间：当前时间 +1 分钟（分钟精度 1min）
-        function defaultStartTime() {
-            const d = new Date();
-            d.setMinutes(d.getMinutes() + 1);
-            return { date: getLocalDateString(d), hour: d.getHours(), minute: d.getMinutes() };
+        // 拼ISO时间字符串；24:00 不是合法 ISO 时间（fromisoformat 拒绝），规范化为次日 00:00
+        function fmtDateTime(dateStr, hour, minute) {
+            let h = parseInt(hour, 10);
+            let d = dateStr;
+            if (h === 24) {
+                const dt = new Date(dateStr + 'T00:00:00');
+                dt.setDate(dt.getDate() + 1);
+                d = getLocalDateString(dt);
+                h = 0;
+            }
+            return `${d}T${String(h).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
         }
 
         // 时间点 + 分钟偏移
@@ -1715,153 +1626,72 @@
             return { date: getLocalDateString(d), hour: d.getHours(), minute: d.getMinutes() };
         }
 
-        // 日期滚筒项：今天起 30 天
-        function buildDateItems() {
-            const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-            const items = [];
-            const now = new Date();
-            for (let i = 0; i < 30; i++) {
-                const d = new Date(now);
-                d.setDate(d.getDate() + i);
-                const label = i === 0 ? '今天'
-                    : i === 1 ? '明天'
-                    : i === 2 ? '后天'
-                    : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${weekdays[d.getDay()]}`;
-                items.push({ label, value: getLocalDateString(d) });
-            }
-            return items;
+        // ===== 添加弹窗的时间控件 =====
+
+        // 结束时间是否被用户手动改过（没改过则跟随开始时间 + 默认时长）
+        let addEndDirty = false;
+
+        function initAddTimePickers() {
+            buildTimeSelects('addStartHour', 'addStartMinute');
+            buildTimeSelects('addEndHour', 'addEndMinute');
+
+            ['addStartDate', 'addStartHour', 'addStartMinute'].forEach(id =>
+                document.getElementById(id).addEventListener('change', onAddStartChange));
+            ['addEndDate', 'addEndHour', 'addEndMinute'].forEach(id =>
+                document.getElementById(id).addEventListener('change', () => addEndDirty = true));
         }
 
-        // 创建一列滚筒；onChange(value, isUser)
-        function createWheel(elId, items, initialIndex, onChange) {
-            const col = document.getElementById(elId);
-            // 首尾各 2 行占位（替代原 padding），保证首/尾项也能居中且上下不空缺
-            const ghost = '<div class="wheel-ghost"></div>'.repeat(2);
-            col.innerHTML = ghost + items.map((it, i) =>
-                `<div class="wheel-item" data-index="${i}">${it.label}</div>`).join('') + ghost;
-            const itemEls = col.querySelectorAll('.wheel-item');
-            let current = -1;
-            let scrollTimer = null;
+        // 读取控件时间（hour 24 规范化为次日零点）；日期为空表示未设置，返回 null
+        function readAddTime(which) {
+            const prefix = which === 'start' ? 'addStart' : 'addEnd';
+            const date = document.getElementById(prefix + 'Date').value;
+            if (!date) return null;
+            const h = parseInt(document.getElementById(prefix + 'Hour').value, 10);
+            const m = parseInt(document.getElementById(prefix + 'Minute').value, 10);
+            const d = new Date(date + 'T00:00:00');
+            d.setMinutes(d.getMinutes() + h * 60 + m);
+            return { date: getLocalDateString(d), hour: d.getHours(), minute: d.getMinutes() };
+        }
 
-            function select(i, user, scroll) {
-                i = Math.max(0, Math.min(items.length - 1, i));
-                if (i === current) return;
-                current = i;
-                col.querySelectorAll('.wheel-item.active').forEach(el => el.classList.remove('active'));
-                itemEls[i].classList.add('active');
-                if (scroll) col.scrollTop = i * 32;
-                onChange(items[i].value, user);
-            }
+        function writeAddTime(which, t) {
+            const prefix = which === 'start' ? 'addStart' : 'addEnd';
+            document.getElementById(prefix + 'Date').value = t.date;
+            document.getElementById(prefix + 'Hour').value = t.hour;
+            document.getElementById(prefix + 'Minute').value = t.minute;
+        }
 
-            col.addEventListener('scroll', () => {
-                clearTimeout(scrollTimer);
-                scrollTimer = setTimeout(() => {
-                    // 若与当前选中一致（程序化滚动的回波），select 会 no-op
-                    select(Math.round(col.scrollTop / 32), true, false);
-                }, 80);
-            });
+        function clearAddTime(which) {
+            const prefix = which === 'start' ? 'addStart' : 'addEnd';
+            document.getElementById(prefix + 'Date').value = '';
+            document.getElementById(prefix + 'Hour').value = '0';
+            document.getElementById(prefix + 'Minute').value = '0';
+        }
 
-            // 鼠标拖动滚动（滚轮精度差时的主要操作方式）
-            let dragMoved = false;
-            col.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                dragMoved = false;
-                const startY = e.clientY;
-                const startScroll = col.scrollTop;
-                col.style.scrollSnapType = 'none';  // 拖动时禁用吸附
-                col.classList.add('dragging');
-                clearTimeout(scrollTimer);
-
-                function onMove(ev) {
-                    const delta = ev.clientY - startY;
-                    if (Math.abs(delta) > 4) dragMoved = true;
-                    col.scrollTop = startScroll - delta;
-                }
-
-                function onUp() {
-                    col.style.scrollSnapType = '';
-                    col.classList.remove('dragging');
-                    document.removeEventListener('mousemove', onMove);
-                    document.removeEventListener('mouseup', onUp);
-                    // 松手后吸附到最近项
-                    select(Math.round(col.scrollTop / 32), true, true);
-                }
-
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
-            });
-
-            col.addEventListener('click', (e) => {
-                // 拖动结束后的 click 不触发跳转（已由吸附处理）
-                if (dragMoved) {
-                    dragMoved = false;
-                    return;
-                }
-                const item = e.target.closest('.wheel-item');
-                if (item) select(parseInt(item.dataset.index), true, true);
-            });
-
-            select(initialIndex, false, true);
-            return { select: (i) => select(i, false, true) };
+        function onAddEndClear() {
+            clearAddTime('end');
+            addEndDirty = true;  // 手动清除后不再跟随开始时间
         }
 
         // 开始时间变化时，结束时间跟随（用户未手动改过的话）
-        function onStartWheelChange() {
-            if (endWheelDirty || !wheelRefs.endDate) return;
-            setEndWheel(addMinutesTo(startWheelState, settings.defaultDuration));
+        function onAddStartChange() {
+            if (addEndDirty) return;
+            const start = readAddTime('start');
+            if (!start) {
+                clearAddTime('end');
+                return;
+            }
+            writeAddTime('end', addMinutesTo(start, settings.defaultDuration));
         }
 
-        function setStartWheel(t) {
-            wheelRefs.startDate.select(dateIndexOf(t.date));
-            wheelRefs.startHour.select(t.hour);
-            wheelRefs.startMinute.select(t.minute);
-        }
-
-        function setEndWheel(t) {
-            wheelRefs.endDate.select(dateIndexOf(t.date));
-            wheelRefs.endHour.select(t.hour);
-            wheelRefs.endMinute.select(t.minute);
-        }
-
-        function dateIndexOf(dateStr) {
-            const i = wheelDateItems.findIndex(it => it.value === dateStr);
-            return i >= 0 ? i : 0;
-        }
-
-        function initWheelPickers() {
-            wheelDateItems = buildDateItems();
-            const hourItems = Array.from({ length: 24 }, (_, h) => ({
-                label: String(h).padStart(2, '0'), value: h,
-            }));
-            const minuteItems = Array.from({ length: 60 }, (_, i) => ({
-                label: String(i).padStart(2, '0'), value: i,
-            }));
-
-            const start = defaultStartTime();
-            const end = addMinutesTo(start, settings.defaultDuration);
-
-            wheelRefs.startDate = createWheel('startWheelDate', wheelDateItems,
-                dateIndexOf(start.date), v => { startWheelState.date = v; onStartWheelChange(); });
-            wheelRefs.startHour = createWheel('startWheelHour', hourItems,
-                start.hour, v => { startWheelState.hour = v; onStartWheelChange(); });
-            wheelRefs.startMinute = createWheel('startWheelMinute', minuteItems,
-                start.minute, v => { startWheelState.minute = v; onStartWheelChange(); });
-
-            wheelRefs.endDate = createWheel('endWheelDate', wheelDateItems,
-                dateIndexOf(end.date), (v, user) => {
-                    endWheelState.date = v;
-                    if (user) endWheelDirty = true;
-                });
-            wheelRefs.endHour = createWheel('endWheelHour', hourItems,
-                end.hour, (v, user) => {
-                    endWheelState.hour = v;
-                    if (user) endWheelDirty = true;
-                });
-            wheelRefs.endMinute = createWheel('endWheelMinute', minuteItems,
-                end.minute, (v, user) => {
-                    endWheelState.minute = v;
-                    if (user) endWheelDirty = true;
-                });
+        function resetAddTimeDefaults() {
+            addEndDirty = false;
+            // 默认开始时间：当前时间向上取整到 5 分钟（分钟下拉只有 5 分钟步进）
+            const now = new Date();
+            now.setSeconds(0, 0);
+            now.setMinutes(Math.ceil(now.getMinutes() / 5) * 5);
+            const start = { date: getLocalDateString(now), hour: now.getHours(), minute: now.getMinutes() };
+            writeAddTime('start', start);
+            writeAddTime('end', addMinutesTo(start, settings.defaultDuration));
         }
 
         // 优先级分段按钮
@@ -2757,11 +2587,8 @@
             // 重置标签选择（重建为全未选中的动态标签列表）
             rebuildAddTagOptions();
 
-            // 重置滚筒时间为当前时间，并恢复"结束时间跟随开始时间"
-            endWheelDirty = false;
-            const start = defaultStartTime();
-            setStartWheel(start);
-            setEndWheel(addMinutesTo(start, settings.defaultDuration));
+            // 重置时间为当前时间（向上取整到 5 分钟），并恢复"结束时间跟随开始时间"
+            resetAddTimeDefaults();
         }
 
         function addTask() {
@@ -2771,10 +2598,11 @@
                 return;
             }
 
-            // 从滚筒状态构建 ISO 时间
-            const fmt = (t) => `${t.date}T${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}:00`;
-            const startTime = fmt(startWheelState);
-            const endTime = fmt(endWheelState);
+            // 从控件读取时间（hour 24 已在 fmtDateTime 内规范化为次日零点）
+            const start = readAddTime('start');
+            const end = readAddTime('end');
+            const startTime = start ? fmtDateTime(start.date, start.hour, start.minute) : null;
+            const endTime = end ? fmtDateTime(end.date, end.hour, end.minute) : null;
 
             const data = {
                 name: name,
@@ -2819,26 +2647,8 @@
 
         // 初始化编辑弹窗的时间选择器
         function initEditTimePickers() {
-            const ids = [
-                ['editStartHour', 'editStartMinute'],
-                ['editEndHour', 'editEndMinute']
-            ];
-            ids.forEach(([hId, mId]) => {
-                const hSel = document.getElementById(hId);
-                const mSel = document.getElementById(mId);
-                for (let h = 0; h <= 24; h++) {
-                    const o = document.createElement('option');
-                    o.value = h;
-                    o.textContent = h.toString().padStart(2, '0');
-                    hSel.appendChild(o);
-                }
-                for (let m = 0; m < 60; m += 5) {
-                    const o = document.createElement('option');
-                    o.value = m;
-                    o.textContent = m.toString().padStart(2, '0');
-                    mSel.appendChild(o);
-                }
-            });
+            buildTimeSelects('editStartHour', 'editStartMinute');
+            buildTimeSelects('editEndHour', 'editEndMinute');
         }
 
         // 创建标签选项 DOM
@@ -2929,14 +2739,15 @@
             if (!name) { alert('请输入任务名称'); return; }
 
             const startDate = document.getElementById('editStartDate').value;
-            const sh = document.getElementById('editStartHour').value.padStart(2, '0');
-            const sm = document.getElementById('editStartMinute').value.padStart(2, '0');
+            const sh = document.getElementById('editStartHour').value;
+            const sm = document.getElementById('editStartMinute').value;
             const endDate = document.getElementById('editEndDate').value;
-            const eh = document.getElementById('editEndHour').value.padStart(2, '0');
-            const em = document.getElementById('editEndMinute').value.padStart(2, '0');
+            const eh = document.getElementById('editEndHour').value;
+            const em = document.getElementById('editEndMinute').value;
 
-            const startTime = startDate ? `${startDate}T${sh}:${sm}:00` : null;
-            const endTime = endDate ? `${endDate}T${eh}:${em}:00` : null;
+            // hour 24 由 fmtDateTime 规范化为次日 00:00
+            const startTime = startDate ? fmtDateTime(startDate, sh, sm) : null;
+            const endTime = endDate ? fmtDateTime(endDate, eh, em) : null;
 
             // 收集标签
             const tags = [];
