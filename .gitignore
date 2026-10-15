@@ -8,3 +8,7 @@ venv/
 .claude/
 data/*.lock
 data/*.remindlock
+
+# 本地工具文件与数据备份
+.zcodeignore
+data/*.bak
