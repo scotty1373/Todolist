@@ -7,6 +7,8 @@ from typing import Self
 import random
 import string
 
+from .utils import parse_iso_time
+
 
 class Priority(Enum):
     """Task priority levels with emoji stars."""
@@ -108,12 +110,12 @@ class Task:
             priority=Priority(data.get("priority", "medium")),
             status=TaskStatus(data.get("status", "pending")),
             tags=data.get("tags", []),
-            start_time=datetime.fromisoformat(data["start_time"]) if data.get("start_time") else None,
-            end_time=datetime.fromisoformat(data["end_time"]) if data.get("end_time") else None,
+            start_time=parse_iso_time(data["start_time"]) if data.get("start_time") else None,
+            end_time=parse_iso_time(data["end_time"]) if data.get("end_time") else None,
             reminder=data.get("reminder", False),
             reminded=data.get("reminded", False),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.now(),
+            created_at=parse_iso_time(data["created_at"]) if data.get("created_at") else datetime.now(),
+            updated_at=parse_iso_time(data["updated_at"]) if data.get("updated_at") else datetime.now(),
         )
 
     def update_timestamp(self):

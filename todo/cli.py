@@ -1,7 +1,6 @@
 """Command-line interface for TodoList tool."""
 
 import argparse
-from datetime import datetime, timedelta
 from typing import Callable
 
 from rich.console import Console
@@ -10,8 +9,8 @@ from rich.panel import Panel
 from rich.text import Text
 
 from .models import Task, Priority, TaskStatus
-from .storage import TaskStorage
-from .utils import parse_time, format_datetime, format_time_window, get_relative_time, validate_time_window
+from .storage import TaskStorage, TaskStorageError
+from .utils import format_time_window, get_relative_time, parse_cli_time_changes
 from .reminder import ReminderService
 
 
@@ -91,46 +90,25 @@ def create_parser() -> argparse.ArgumentParser:
 
 def cmd_add(args, storage: TaskStorage):
     """Handle add command."""
-    start_time = None
-    end_time = None
-
     try:
-        start_time = parse_time(args.start, allow_next_day=False) if args.start else None
-    except ValueError as e:
-        console.print(f"[red]错误: 开始时间格式错误 - {e}[/red]")
+        times = parse_cli_time_changes(args.start, args.end)
+        task = storage.add_task(Task(
+            name=args.name,
+            description=args.description,
+            priority=Priority.from_string(args.priority),
+            tags=args.tags,
+            reminder=args.remind,
+            **times,
+        ))
+    except (ValueError, OverflowError) as e:
+        console.print(f"[red]错误: {e}[/red]")
         return
-
-    try:
-        end_time = parse_time(args.end, allow_next_day=False) if args.end else None
-    except ValueError as e:
-        console.print(f"[red]错误: 结束时间格式错误 - {e}[/red]")
-        return
-
-    # Validate and adjust time window
-    start_time, end_time, error = validate_time_window(start_time, end_time)
-    if error:
-        console.print(f"[red]错误: {error}[/red]")
-        return
-
-    priority = Priority.from_string(args.priority)
-
-    task = Task(
-        name=args.name,
-        description=args.description,
-        priority=priority,
-        tags=args.tags,
-        start_time=start_time,
-        end_time=end_time,
-        reminder=args.remind,
-    )
-
-    storage.add_task(task)
 
     console.print(Panel(
         f"[green]✓[/green] 已添加任务: {task.name}\n"
         f"  ID: [cyan]{task.id}[/cyan]\n"
         f"  优先级: {task.priority.stars}\n"
-        f"  时间: {format_time_window(start_time, end_time)}",
+        f"  时间: {format_time_window(task.start_time, task.end_time)}",
         title="添加成功",
         border_style="green",
     ))
@@ -252,43 +230,24 @@ def cmd_delete(args, storage: TaskStorage):
 
 def cmd_edit(args, storage: TaskStorage):
     """Handle edit command."""
+    def changes(task: Task) -> dict:
+        updates = parse_cli_time_changes(args.start, args.end, task.start_time, task.end_time)
+        if args.name:
+            updates["name"] = args.name
+        if args.description:
+            updates["description"] = args.description
+        if args.priority:
+            updates["priority"] = Priority.from_string(args.priority)
+        if args.tags is not None:
+            updates["tags"] = args.tags
+        return updates
+
     try:
-        task = storage.get_task_by_id(args.id)
-    except ValueError as e:
+        task = storage.update_task_fields(args.id, changes)
+    except (ValueError, OverflowError) as e:
         console.print(f"[red]错误: {e}[/red]")
         return
-    if not task:
-        console.print(f"[red]未找到任务: {args.id}[/red]")
-        return
 
-    if args.name:
-        task.name = args.name
-    if args.description:
-        task.description = args.description
-    if args.priority:
-        task.priority = Priority.from_string(args.priority)
-    if args.tags is not None:
-        task.tags = args.tags
-    try:
-        if args.start:
-            task.start_time = parse_time(args.start)
-        if args.end:
-            task.end_time = parse_time(args.end)
-    except ValueError as e:
-        console.print(f"[red]错误: 时间格式错误 - {e}[/red]")
-        return
-
-    # Validate the resulting window; handle cross-day (e.g. 23:00 - 05:00)
-    if task.start_time and task.end_time and task.end_time <= task.start_time:
-        if task.end_time.date() == task.start_time.date():
-            task.end_time += timedelta(days=1)
-        if task.end_time <= task.start_time:
-            console.print(
-                f"[red]错误: 结束时间 ({format_datetime(task.end_time)}) "
-                f"必须晚于开始时间 ({format_datetime(task.start_time)})[/red]")
-            return
-
-    storage.update_task(task)
     console.print(f"[green]✓[/green] 已更新任务: {task.name} [{task.id}]")
 
 
@@ -349,8 +308,6 @@ def run_cli(args=None):
     parser = create_parser()
     args = parser.parse_args(args)
 
-    storage = TaskStorage()
-
     if args.command is None:
         parser.print_help()
         return
@@ -374,6 +331,9 @@ def run_cli(args=None):
     }
 
     if args.command in commands:
-        commands[args.command](args, storage)
+        try:
+            commands[args.command](args, TaskStorage())
+        except TaskStorageError as e:
+            parser.exit(1, f"{e}\n")
     else:
         parser.print_help()

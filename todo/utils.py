@@ -6,6 +6,25 @@ from dateutil.relativedelta import relativedelta
 import re
 
 
+def normalize_local_time(value: datetime | None) -> datetime | None:
+    """Use the server's local wall time throughout the application."""
+    if value is not None and value.utcoffset() is not None:
+        try:
+            return value.astimezone().replace(tzinfo=None)
+        except (OSError, OverflowError) as error:
+            raise ValueError("时间超出本地时区可转换的范围") from error
+    return value
+
+
+def parse_iso_time(value: str) -> datetime:
+    return normalize_local_time(datetime.fromisoformat(value))
+
+
+def _is_clock_time(value: str) -> bool:
+    pattern = r"(?:\d{1,2}(?::\d{2}){1,2}\s*(?:[ap]m)?|\d{1,2}\s*[ap]m)"
+    return bool(re.fullmatch(pattern, value.strip(), re.IGNORECASE))
+
+
 def parse_time(time_str: str, base_date: date = None, allow_next_day: bool = True) -> datetime:
     """
     Parse time string to datetime.
@@ -21,6 +40,8 @@ def parse_time(time_str: str, base_date: date = None, allow_next_day: bool = Tru
         base_date: Base date for time-only strings (default: today)
         allow_next_day: If True and time < current time, allow next day
     """
+    if not isinstance(time_str, str):
+        raise ValueError("时间必须是字符串")
     if base_date is None:
         base_date = date.today()
 
@@ -34,9 +55,9 @@ def parse_time(time_str: str, base_date: date = None, allow_next_day: bool = Tru
         "大后天": 3,
     }
 
-    for cn_date, days_offset in chinese_dates.items():
-        if cn_date in time_str:
-            time_str = time_str.replace(cn_date, "").strip()
+    for cn_date, days_offset in reversed(chinese_dates.items()):
+        if time_str.startswith(cn_date):
+            time_str = time_str[len(cn_date):].strip()
             target_date = base_date + relativedelta(days=days_offset)
             if time_str:
                 parsed_time = _parse_time_only(time_str)
@@ -72,8 +93,7 @@ def parse_time(time_str: str, base_date: date = None, allow_next_day: bool = Tru
     # Time-only strings must be checked BEFORE dateutil, because
     # dateutil.parse("18:00") silently fills in today's date and would
     # make allow_next_day dead code.
-    if re.match(r"^\d{1,2}(:\d{2}){1,2}\s*([aApP][mM])?$", time_str) or \
-       re.match(r"^\d{1,2}\s*[aApP][mM]$", time_str):
+    if _is_clock_time(time_str):
         parsed_time = _parse_time_only(time_str)
         result = datetime.combine(base_date, parsed_time.time())
 
@@ -86,8 +106,8 @@ def parse_time(time_str: str, base_date: date = None, allow_next_day: bool = Tru
 
     # Absolute datetime (must contain an explicit date part)
     try:
-        return date_parser.parse(time_str)
-    except (ValueError, OverflowError):
+        return normalize_local_time(date_parser.parse(time_str))
+    except (ValueError, OverflowError, OSError):
         raise ValueError(f"无法解析时间: {time_str}")
 
 
@@ -113,57 +133,40 @@ def _parse_time_only(time_str: str) -> datetime:
     return date_parser.parse(time_str)
 
 
-def validate_time_window(start: datetime | None, end: datetime | None) -> tuple[datetime | None, datetime | None, str | None]:
-    """
-    Validate and adjust time window.
+def validate_time_window(start: datetime | None, end: datetime | None) -> None:
+    if start is not None and end is not None and end <= start:
+        raise ValueError("结束时间必须晚于开始时间")
 
-    Handles cross-day scenarios:
-    - If end < start (e.g., 23:00 - 05:00), end is moved to next day
-    - If start is in the past but end is in the future, start is moved to next day
 
-    Returns:
-        (adjusted_start, adjusted_end, error_message)
-    """
-    if start is None and end is None:
-        return None, None, None
-
+def parse_cli_time_changes(
+    start_text: str | None,
+    end_text: str | None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> dict[str, datetime]:
+    """Resolve bare clock inputs while preserving explicitly supplied dates."""
     now = datetime.now()
+    start_is_clock = bool(start_text and _is_clock_time(start_text))
+    end_is_clock = bool(end_text and _is_clock_time(end_text))
+    changes = {}
 
-    # If only end time is set
-    if start is None and end is not None:
-        # If end time has passed, assume next day
-        if end < now:
-            end += timedelta(days=1)
-        return None, end, None
-
-    # If only start time is set
-    if start is not None and end is None:
-        if start < now:
+    if start_text:
+        start = parse_time(start_text, base_date=now.date(), allow_next_day=False)
+        if start_is_clock and not end_text and end is None and start < now:
             start += timedelta(days=1)
-        return start, None, None
+        changes["start_time"] = start
 
-    # Both start and end are set
-    if start is not None and end is not None:
-        # Case 1: end time is earlier than start time (cross-day scenario)
-        # e.g., 23:00 today - 05:00 tomorrow
-        if end.time() < start.time():
-            # End should be next day
-            if start.date() == end.date():
-                end += timedelta(days=1)
-
-        # Case 2: both times are in the past
-        if end < now and start < now:
-            # Move both to next day
-            start += timedelta(days=1)
+    if end_text:
+        base_date = start.date() if end_is_clock and start else now.date()
+        end = parse_time(end_text, base_date=base_date, allow_next_day=False)
+        if end_is_clock and end < (start or now):
             end += timedelta(days=1)
+        if start_is_clock and end_is_clock and end < now:
+            changes["start_time"] = start + timedelta(days=1)
+            end += timedelta(days=1)
+        changes["end_time"] = end
 
-        # Validate: end must be after start
-        if end <= start:
-            return start, end, f"结束时间 ({format_datetime(end)}) 必须晚于开始时间 ({format_datetime(start)})"
-
-        return start, end, None
-
-    return start, end, None
+    return changes
 
 
 def format_datetime(dt: datetime | None, include_date: bool = True) -> str:
@@ -185,16 +188,9 @@ def format_datetime(dt: datetime | None, include_date: bool = True) -> str:
 def format_time_window(start: datetime | None, end: datetime | None) -> str:
     """Format time window for display, handling cross-day scenarios."""
     if start and end:
-        start_str = format_datetime(start, include_date=False)
-        # If end is on a different day, include date info
-        if end.date() > start.date():
-            days_diff = (end.date() - start.date()).days
-            if days_diff == 1:
-                end_str = f"明天 {end.strftime('%H:%M')}"
-            else:
-                end_str = end.strftime("%m-%d %H:%M")
-        else:
-            end_str = end.strftime("%H:%M")
+        cross_day = end.date() != start.date()
+        start_str = format_datetime(start, include_date=cross_day)
+        end_str = format_datetime(end) if cross_day else end.strftime("%H:%M")
         return f"{start_str} - {end_str}"
     elif end:
         return f"截止: {format_datetime(end)}"

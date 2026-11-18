@@ -305,13 +305,15 @@
         .priority-dot.priority-medium { background: #d2963c; }
         .priority-dot.priority-low { background: #5aaa64; }
 
-        .add-task-btn {
+        .sidebar-actions {
+            display: flex;
+            gap: 8px;
             padding: 16px;
             border-top: 1px solid var(--border-light);
         }
 
-        .add-task-btn button {
-            width: 100%;
+        .add-task-btn {
+            flex: 1;
             padding: 12px;
             border: 2px dashed var(--border);
             border-radius: 12px;
@@ -322,7 +324,24 @@
             transition: all 0.2s;
         }
 
-        .add-task-btn button:hover {
+        .add-task-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .settings-btn {
+            flex: 0 0 44px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 18px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .settings-btn:hover {
+            background: var(--bg-hover);
             border-color: var(--accent);
             color: var(--accent);
         }
@@ -848,6 +867,10 @@
             border-radius: 10px;
         }
 
+        .form-group input[type="date"] {
+            cursor: pointer;
+        }
+
         #taskName {
             font-size: 15px;
         }
@@ -856,15 +879,6 @@
         .form-group select:focus {
             outline: none;
             border-color: var(--accent);
-        }
-
-        .form-row {
-            display: flex;
-            gap: 12px;
-        }
-
-        .form-row .form-group {
-            flex: 1;
         }
 
         /* 时间选择器样式 */
@@ -1195,23 +1209,6 @@
         :root[data-theme="dark"] .hour-task.priority-medium { color: #d9b06c; }
         :root[data-theme="dark"] .hour-task.priority-low { color: #8cc793; }
 
-        /* 设置入口按钮（侧栏标题行） */
-        .settings-btn {
-            border: none;
-            background: transparent;
-            cursor: pointer;
-            color: var(--text-muted);
-            font-size: 14px;
-            padding: 4px 8px;
-            border-radius: 6px;
-            transition: all 0.15s;
-        }
-
-        .settings-btn:hover {
-            background: var(--bg-hover);
-            color: var(--accent);
-        }
-
         /* 设置面板分段控件：复用 priority-segment，但去掉优先级圆点 */
         .settings-segment .priority-opt::before {
             display: none;
@@ -1226,6 +1223,17 @@
     </style>
 </head>
 <body>
+    {% macro task_priority(segment_id) %}
+    <div class="form-group">
+        <label id="{{ segment_id }}Label">优先级</label>
+        <div class="priority-segment" id="{{ segment_id }}" role="group" aria-labelledby="{{ segment_id }}Label">
+            <button type="button" class="priority-opt high" data-value="high" aria-pressed="false">高</button>
+            <button type="button" class="priority-opt medium active" data-value="medium" aria-pressed="true">中</button>
+            <button type="button" class="priority-opt low" data-value="low" aria-pressed="false">低</button>
+        </div>
+    </div>
+    {% endmacro %}
+
     <div class="app-container">
         <!-- 侧栏收起后的悬浮展开按钮 -->
         <button class="sidebar-expand-fab" title="展开任务栏" onclick="toggleSidebar()">⟩⟩</button>
@@ -1235,7 +1243,6 @@
             <div class="sidebar-header">
                 <div class="sidebar-title-row">
                     <h1>任务</h1>
-                    <button class="settings-btn" title="设置" onclick="openSettings()">⚙</button>
                     <button class="sidebar-collapse-btn" title="收起任务栏" onclick="toggleSidebar()">⟨⟨</button>
                 </div>
                 <div class="date-display" id="currentDate"></div>
@@ -1252,8 +1259,9 @@
                 <!-- 任务列表由 JS 生成 -->
             </div>
 
-            <div class="add-task-btn">
-                <button onclick="openAddModal()">+ 添加任务</button>
+            <div class="sidebar-actions">
+                <button type="button" class="settings-btn" title="设置" aria-label="设置" onclick="openSettings()">⚙</button>
+                <button type="button" class="add-task-btn" onclick="openAddModal()">+ 添加任务</button>
             </div>
         </aside>
 
@@ -1297,15 +1305,7 @@
                 <label>任务名称</label>
                 <input type="text" id="taskName" placeholder="输入任务名称">
             </div>
-            <div class="form-group">
-                <label>优先级</label>
-                <div class="priority-segment" id="prioritySegment">
-                    <button type="button" class="priority-opt high" data-value="high">高</button>
-                    <button type="button" class="priority-opt medium active" data-value="medium">中</button>
-                    <button type="button" class="priority-opt low" data-value="low">低</button>
-                </div>
-                <input type="hidden" id="taskPriority" value="medium">
-            </div>
+            {{ task_priority('prioritySegment') }}
             <div class="form-group">
                 <label>标签（可多选）</label>
                 <div class="tags-container" id="tagsContainer">
@@ -1316,22 +1316,22 @@
                 </div>
             </div>
             <div class="form-group">
-                <label>开始时间</label>
+                <label for="addStartDate">开始时间</label>
                 <input type="date" id="addStartDate">
                 <div class="time-picker-row">
-                    <select id="addStartHour"></select>
+                    <select id="addStartHour" aria-label="开始小时"></select>
                     <span class="time-separator">:</span>
-                    <select id="addStartMinute"></select>
+                    <select id="addStartMinute" aria-label="开始分钟"></select>
                     <button class="btn-clear-time" onclick="clearAddTime('start'); onAddStartChange();">清除</button>
                 </div>
             </div>
             <div class="form-group">
-                <label>结束时间</label>
+                <label for="addEndDate">结束时间</label>
                 <input type="date" id="addEndDate">
                 <div class="time-picker-row">
-                    <select id="addEndHour"></select>
+                    <select id="addEndHour" aria-label="结束小时"></select>
                     <span class="time-separator">:</span>
-                    <select id="addEndMinute"></select>
+                    <select id="addEndMinute" aria-label="结束分钟"></select>
                     <button class="btn-clear-time" onclick="onAddEndClear()">清除</button>
                 </div>
             </div>
@@ -1361,16 +1361,7 @@
                 <label>任务名称</label>
                 <input type="text" id="editTaskName" placeholder="输入任务名称">
             </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>优先级</label>
-                    <select id="editTaskPriority">
-                        <option value="high">⭐⭐⭐ 高</option>
-                        <option value="medium" selected>⭐⭐ 中</option>
-                        <option value="low">⭐ 低</option>
-                    </select>
-                </div>
-            </div>
+            {{ task_priority('editPrioritySegment') }}
             <div class="form-group">
                 <label>标签（可多选）</label>
                 <div class="tags-container" id="editTagsContainer">
@@ -1380,22 +1371,22 @@
                 </div>
             </div>
             <div class="form-group">
-                <label>开始时间</label>
+                <label for="editStartDate">开始时间</label>
                 <input type="date" id="editStartDate">
                 <div class="time-picker-row">
-                    <select id="editStartHour"></select>
+                    <select id="editStartHour" aria-label="开始小时"></select>
                     <span class="time-separator">:</span>
-                    <select id="editStartMinute"></select>
+                    <select id="editStartMinute" aria-label="开始分钟"></select>
                     <button class="btn-clear-time" onclick="clearEditTime('start')">清除</button>
                 </div>
             </div>
             <div class="form-group">
-                <label>结束时间</label>
+                <label for="editEndDate">结束时间</label>
                 <input type="date" id="editEndDate">
                 <div class="time-picker-row">
-                    <select id="editEndHour"></select>
+                    <select id="editEndHour" aria-label="结束小时"></select>
                     <span class="time-separator">:</span>
-                    <select id="editEndMinute"></select>
+                    <select id="editEndMinute" aria-label="结束分钟"></select>
                     <button class="btn-clear-time" onclick="clearEditTime('end')">清除</button>
                 </div>
             </div>
@@ -1543,23 +1534,32 @@
         }
 
         function markSegment(segId, value) {
-            document.querySelectorAll(`#${segId} .priority-opt`).forEach(b =>
-                b.classList.toggle('active', b.dataset.value === value));
-        }
-
-        function setupSettingsPanel() {
-            ['themeSegment', 'hourHeightSegment', 'durationSegment'].forEach(id => {
-                document.getElementById(id).addEventListener('click', (e) => {
-                    const btn = e.target.closest('.priority-opt');
-                    if (btn) markSegment(id, btn.dataset.value);
-                });
+            document.querySelectorAll(`#${segId} .priority-opt`).forEach(button => {
+                const selected = button.dataset.value === value;
+                button.classList.toggle('active', selected);
+                button.setAttribute('aria-pressed', String(selected));
             });
         }
 
+        function setupSegment(id) {
+            document.getElementById(id).addEventListener('click', event => {
+                const button = event.target.closest('.priority-opt');
+                if (button) markSegment(id, button.dataset.value);
+            });
+        }
+
+        function segmentValue(id) {
+            return document.querySelector(`#${id} .priority-opt.active`).dataset.value;
+        }
+
+        function setupSettingsPanel() {
+            ['themeSegment', 'hourHeightSegment', 'durationSegment'].forEach(setupSegment);
+        }
+
         function saveSettingsPanel() {
-            settings.theme = document.querySelector('#themeSegment .priority-opt.active').dataset.value;
-            settings.hourHeight = parseInt(document.querySelector('#hourHeightSegment .priority-opt.active').dataset.value, 10);
-            settings.defaultDuration = parseInt(document.querySelector('#durationSegment .priority-opt.active').dataset.value, 10);
+            settings.theme = segmentValue('themeSegment');
+            settings.hourHeight = Number(segmentValue('hourHeightSegment'));
+            settings.defaultDuration = Number(segmentValue('durationSegment'));
             settings.earlyHoursCollapsed = !document.getElementById('earlyHoursSetting').checked;
             saveSettings();
             closeSettings();
@@ -1574,7 +1574,8 @@
             renderTimeline();
             setupFilterButtons();
             initAddTimePickers();
-            initPrioritySegment();
+            initDatePickers();
+            ['prioritySegment', 'editPrioritySegment'].forEach(setupSegment);
             initTagSelector();
             initKnownTags();
             initEditTimePickers();
@@ -1588,7 +1589,21 @@
 
         // ========== 时间选择控件（添加/编辑弹窗共用：日期 + 时/分下拉）==========
 
-        // 时/分下拉选项：时 00-24，分 5 分钟步进
+        function initDatePickers() {
+            document.querySelectorAll('.form-group input[type="date"]').forEach(input => {
+                if (typeof input.showPicker !== 'function') return;
+                input.addEventListener('click', event => {
+                    try {
+                        input.showPicker();
+                        event.preventDefault();
+                    } catch {
+                        // Leave the browser's default date input behavior available.
+                    }
+                });
+            });
+        }
+
+        // 时/分下拉选项：时 00–24，分 00–59
         function buildTimeSelects(hourId, minuteId) {
             const hSel = document.getElementById(hourId);
             const mSel = document.getElementById(minuteId);
@@ -1598,7 +1613,7 @@
                 o.textContent = h.toString().padStart(2, '0');
                 hSel.appendChild(o);
             }
-            for (let m = 0; m < 60; m += 5) {
+            for (let m = 0; m < 60; m++) {
                 const o = document.createElement('option');
                 o.value = m;
                 o.textContent = m.toString().padStart(2, '0');
@@ -1606,24 +1621,24 @@
             }
         }
 
-        // 拼ISO时间字符串；24:00 不是合法 ISO 时间（fromisoformat 拒绝），规范化为次日 00:00
-        function fmtDateTime(dateStr, hour, minute) {
-            let h = parseInt(hour, 10);
-            let d = dateStr;
-            if (h === 24) {
-                const dt = new Date(dateStr + 'T00:00:00');
-                dt.setDate(dt.getDate() + 1);
-                d = getLocalDateString(dt);
-                h = 0;
-            }
-            return `${d}T${String(h).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
+        // 用 UTC 运算表示服务端的本地钟面时间，避免浏览器时区改变结果。
+        function shiftTaskTime(iso, minutes) {
+            if (!iso) return null;
+            const [whole, fraction] = iso.split('.');
+            const shifted = new Date(Date.parse(whole + 'Z') + minutes * 60000).toISOString().slice(0, -5);
+            return fraction ? shifted + '.' + fraction : shifted;
         }
 
-        // 时间点 + 分钟偏移
+        function fmtDateTime(dateStr, hour, minute) {
+            return shiftTaskTime(dateStr + 'T00:00:00', Number(hour) * 60 + Number(minute));
+        }
+
+        function splitTaskTime(iso) {
+            return { date: iso.slice(0, 10), hour: Number(iso.slice(11, 13)), minute: Number(iso.slice(14, 16)) };
+        }
+
         function addMinutesTo(t, mins) {
-            const d = new Date(t.date + 'T00:00:00');
-            d.setMinutes(d.getMinutes() + t.hour * 60 + t.minute + mins);
-            return { date: getLocalDateString(d), hour: d.getHours(), minute: d.getMinutes() };
+            return splitTaskTime(shiftTaskTime(fmtDateTime(t.date, t.hour, t.minute), mins));
         }
 
         // ===== 添加弹窗的时间控件 =====
@@ -1646,11 +1661,8 @@
             const prefix = which === 'start' ? 'addStart' : 'addEnd';
             const date = document.getElementById(prefix + 'Date').value;
             if (!date) return null;
-            const h = parseInt(document.getElementById(prefix + 'Hour').value, 10);
-            const m = parseInt(document.getElementById(prefix + 'Minute').value, 10);
-            const d = new Date(date + 'T00:00:00');
-            d.setMinutes(d.getMinutes() + h * 60 + m);
-            return { date: getLocalDateString(d), hour: d.getHours(), minute: d.getMinutes() };
+            return splitTaskTime(fmtDateTime(date, document.getElementById(prefix + 'Hour').value,
+                document.getElementById(prefix + 'Minute').value));
         }
 
         function writeAddTime(which, t) {
@@ -1685,25 +1697,10 @@
 
         function resetAddTimeDefaults() {
             addEndDirty = false;
-            // 默认开始时间：当前时间向上取整到 5 分钟（分钟下拉只有 5 分钟步进）
-            const now = new Date();
-            now.setSeconds(0, 0);
-            now.setMinutes(Math.ceil(now.getMinutes() / 5) * 5);
+            const now = new Date(Math.ceil(Date.now() / 60000) * 60000);
             const start = { date: getLocalDateString(now), hour: now.getHours(), minute: now.getMinutes() };
             writeAddTime('start', start);
             writeAddTime('end', addMinutesTo(start, settings.defaultDuration));
-        }
-
-        // 优先级分段按钮
-        function initPrioritySegment() {
-            document.querySelectorAll('#prioritySegment .priority-opt').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    document.querySelectorAll('#prioritySegment .priority-opt')
-                        .forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    document.getElementById('taskPriority').value = btn.dataset.value;
-                });
-            });
         }
 
         // ========== 动态标签 ==========
@@ -1888,19 +1885,27 @@
 
         // 页内切换日期：仅拉取该日任务并重渲染，避免整页刷新造成的闪白
         let switchDateSeq = 0;
+        let pendingDate = null;
 
         async function switchDate(iso, push = true) {
             const seq = ++switchDateSeq;
-            let tasks = null;
+            pendingDate = { iso, push };
+            let tasks;
             try {
                 const resp = await fetch('/api/tasks/' + iso);
-                if (resp.ok) tasks = await resp.json();
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                tasks = await resp.json();
             } catch (e) {
-                console.error('切换日期加载任务失败:', e);
-                // 请求失败时仍切换视图，任务列表沿用现有数据
+                if (seq === switchDateSeq) {
+                    pendingDate = null;
+                    if (!push) history.replaceState({ date: currentDate }, '', dateUrl(currentDate));
+                    alert('加载日程失败，请重试');
+                }
+                return;
             }
             if (seq !== switchDateSeq) return; // 期间又切到别的日期，丢弃过期结果
-            if (tasks) allTasks = tasks;
+            pendingDate = null;
+            allTasks = tasks;
 
             currentDate = iso;
             [viewYear, viewMonth] = iso.split('-').slice(0, 2).map(Number);
@@ -1908,10 +1913,11 @@
             renderTaskList();
             renderTimeline();
 
-            if (push) {
-                const today = getLocalDateString(new Date());
-                history.pushState({ date: iso }, '', iso === today ? '/' : '/?date=' + iso);
-            }
+            if (push) history.pushState({ date: iso }, '', dateUrl(iso));
+        }
+
+        function dateUrl(iso) {
+            return iso === getLocalDateString(new Date()) ? '/' : '/?date=' + iso;
         }
 
         // 浏览器前进/后退：按地址栏里的日期恢复视图
@@ -2015,7 +2021,8 @@
 
             // 按优先级排序
             const priorityOrder = { high: 0, medium: 1, low: 2 };
-            tasks.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+            tasks.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]
+                || (a.end_time_iso || '9999').localeCompare(b.end_time_iso || '9999'));
 
             if (tasks.length === 0) {
                 container.innerHTML = '<div class="empty-state">暂无任务</div>';
@@ -2109,8 +2116,8 @@
                 .filter(el => el.dataset.dispStart !== undefined)
                 .map(el => ({
                     el,
-                    start: parseInt(el.dataset.dispStart, 10),
-                    end: parseInt(el.dataset.dispEnd, 10),
+                    start: Number(el.dataset.dispStart),
+                    end: Number(el.dataset.dispEnd),
                 }));
             if (!blocks.length) return;
             assignOverlapColumns(blocks);
@@ -2126,7 +2133,22 @@
             });
         }
 
-        function renderTimeline() {
+        function timelineRange(task, iso) {
+            const midnight = Date.parse(iso + 'T00:00:00Z');
+            const dayMinutes = 24 * 60;
+            const start = task.start_time_iso ? (Date.parse(task.start_time_iso + 'Z') - midnight) / 60000 : null;
+            const end = task.end_time_iso ? (Date.parse(task.end_time_iso + 'Z') - midnight) / 60000 : null;
+            if (start !== null && end !== null) {
+                if (start >= dayMinutes || end <= 0 || end <= start) return null;
+                return { start: Math.max(0, start), end: Math.min(dayMinutes, end) };
+            }
+            const point = start ?? end;
+            if (point === null || point < 0 || point >= dayMinutes) return null;
+            if (start !== null) return { start, end: Math.min(dayMinutes, start + 60) };
+            return { start: Math.max(0, end - 60), end: end || 5 };
+        }
+
+        function renderTimeline(scrollToCurrentTime = true) {
             const container = document.getElementById('timeline');
             const now = new Date();
             const currentHour = now.getHours();
@@ -2136,18 +2158,19 @@
             const today = getLocalDateString(new Date());
             const isToday = currentDate === today;
 
-            const timedTasks = allTasks.filter(t => t.start_time || t.end_time);
-            const untasks = allTasks.filter(t => !t.start_time && !t.end_time);
+            const timedTasks = [];
+            const untasks = [];
+            for (const task of allTasks) {
+                if (!task.start_time_iso && !task.end_time_iso) {
+                    untasks.push(task);
+                    continue;
+                }
+                const range = timelineRange(task, currentDate);
+                if (range) timedTasks.push({ task, ...range });
+            }
 
             // 凌晨时段 (0:00-6:00) 默认折叠；有任务落在凌晨、或当前时间在凌晨时自动展开
-            const hasEarlyTask = timedTasks.some(t => {
-                const s = t.start_time_iso, e = t.end_time_iso;
-                if (s && s.slice(0, 10) === currentDate && parseInt(s.slice(11, 13)) < 6) return true;
-                // 从昨日延续、今天凌晨结束的任务
-                if (s && e && s.slice(0, 10) < currentDate && e.slice(0, 10) === currentDate
-                    && parseInt(e.slice(11, 13)) <= 6) return true;
-                return false;
-            });
+            const hasEarlyTask = timedTasks.some(t => t.start < 6 * 60);
             const showEarly = !settings.earlyHoursCollapsed || hasEarlyTask || (isToday && currentHour < 6);
 
             // 生成 0:00 - 24:00 的时间轴
@@ -2185,100 +2208,41 @@
                 this.textContent = `${collapsed ? '▾' : '▸'} 凌晨时段 (0:00 - 6:00)`;
             };
 
-            // 从 ISO 字符串提取日期和分钟数（避免时区转换）
-            const parseIso = (iso) => {
-                const m = iso && iso.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
-                return m ? { date: m[1], minutes: parseInt(m[2]) * 60 + parseInt(m[3]) } : null;
-            };
-            const fmtMin = (mins) =>
-                `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+            assignOverlapColumns(timedTasks);
 
-            // 第一遍：计算每个任务在当天时间轴上的可见区间与几何信息
-            const layoutItems = [];
-            timedTasks.forEach(task => {
-                const start = parseIso(task.start_time_iso);
-                const end = parseIso(task.end_time_iso);
-                if (!start && !end) return;
-
-                // 把任务时间窗口裁剪到当前浏览日期：
-                // 跨日任务在开始日显示到 24:00，结束日从 00:00 开始，中间日显示全天
-                const fromPrevDay = start && start.date < currentDate;
-                const toNextDay = end && end.date > currentDate;
-
-                let dispStart = fromPrevDay ? 0
-                    : start ? start.minutes
-                    : Math.max(end.minutes - 60, 0); // 仅截止时间的任务：显示截止前一小时
-                let dispEnd = toNextDay ? 24 * 60
-                    : end ? end.minutes
-                    : dispStart + 60;                // 仅开始时间的任务：默认一小时
-                if (dispEnd <= dispStart) dispEnd = Math.min(dispStart + 60, 24 * 60);
-
-                const startHour = Math.floor(dispStart / 60);
-                const startMinute = dispStart % 60;
-
-                // 计算位置和高度（仅当天可见部分，不会溢出时间轴）
-                const topPos = (startMinute / 60) * hourHeight;
-                const height = Math.max((dispEnd - dispStart) / 60 * hourHeight - 8, 40);
-
-                // 完整时长（拖拽时保持整个任务的时长不变）
-                let fullDurationMin = 60;
-                if (start && end) {
-                    fullDurationMin = Math.round(
-                        (Date.parse(task.end_time_iso) - Date.parse(task.start_time_iso)) / 60000);
-                    if (fullDurationMin <= 0) fullDurationMin = 60;
-                }
-
-                // 时间范围文本：跨日时两端都带上实际日期，同日沿用后端格式
-                const startLabel = fromPrevDay
-                    ? `${start.date.slice(5).replace('-', '/')} ${fmtMin(start.minutes)}`
-                    : fmtMin(dispStart);
-                const endLabel = toNextDay
-                    ? `${end.date.slice(5).replace('-', '/')} ${fmtMin(end.minutes)}`
-                    : fmtMin(dispEnd % (24 * 60));
-                const timeRange = (fromPrevDay || toNextDay)
-                    ? `${startLabel} - ${endLabel}`
-                    : task.time_window;
-
-                layoutItems.push({
-                    task, start: dispStart, end: dispEnd, startHour, startMinute,
-                    topPos, height,
-                    duration: fullDurationMin / 60, // 小时
-                    isCrossDay: fromPrevDay || toNextDay,
-                    timeRange,
-                });
-            });
-
-            // 第二遍：时间区间重叠的任务归入同组，组内并排分列（主流日历布局）
-            assignOverlapColumns(layoutItems);
-
-            for (const it of layoutItems) {
-                const task = it.task;
-                const hourContent = container.querySelector(`[data-hour="${it.startHour}"] .hour-content`);
+            for (const it of timedTasks) {
+                const { task, start, end } = it;
+                const startHour = Math.floor(start / 60);
+                const height = Math.max((end - start) / 60 * hourHeight - 8, 40);
+                const startDate = task.start_time_iso?.slice(0, 10);
+                const endDate = task.end_time_iso?.slice(0, 10);
+                const isCrossDay = startDate && endDate && startDate !== endDate;
+                const hourContent = container.querySelector(`[data-hour="${startHour}"] .hour-content`);
                 if (!hourContent) continue;
 
                 const taskEl = document.createElement('div');
                 taskEl.className = `hour-task priority-${task.priority} ${task.status === 'done' ? 'done' : ''}`;
                 taskEl.dataset.id = task.id;
-                taskEl.dataset.startHour = it.startHour;
-                taskEl.dataset.startMinute = it.startMinute;
-                taskEl.dataset.duration = it.duration;
-                taskEl.dataset.isCrossDay = it.isCrossDay;
                 // 当前显示区间（分钟数），供拖拽实时重排读取
-                taskEl.dataset.dispStart = it.start;
-                taskEl.dataset.dispEnd = it.end;
-                taskEl.style.top = `${it.topPos + 4}px`;
-                taskEl.style.height = `${it.height}px`;
+                taskEl.dataset.dispStart = start;
+                taskEl.dataset.dispEnd = end;
+                taskEl.style.top = `${(start % 60) / 60 * hourHeight + 4}px`;
+                taskEl.style.height = `${height}px`;
 
                 // 同组重叠任务按列并排（列间 3px 间隙），无重叠时保持全宽
                 applyColumnStyle(taskEl, it.colIndex, it.colCount);
 
                 // 短时长任务块精简显示，避免文字溢出
-                if (it.height < 36) taskEl.classList.add('tiny');
-                else if (it.height < 60) taskEl.classList.add('compact');
+                if (height < 60) taskEl.classList.add('compact');
+
+                const shortDateTime = (iso) => iso.slice(5, 16).replace('-', '/').replace('T', ' ');
+                const timeRange = isCrossDay
+                    ? `${shortDateTime(task.start_time_iso)} - ${shortDateTime(task.end_time_iso)}`
+                    : task.time_window;
 
                 taskEl.innerHTML = `
-                    <div class="task-name">${task.name}${it.isCrossDay ? ' 🌙' : ''}</div>
-                    <div class="task-time-range">${it.timeRange}</div>
+                    <div class="task-name">${task.name}${isCrossDay ? ' 🌙' : ''}</div>
+                    <div class="task-time-range">${timeRange}</div>
                 `;
                 taskEl.onclick = (e) => {
                     if (!e.target.closest('.hour-task').classList.contains('dragging')) {
@@ -2296,7 +2260,7 @@
 
                 // 添加拖拽功能（已完成任务不可拖拽）
                 if (task.status !== 'done') {
-                    setupTaskDrag(taskEl, task.id, it.duration, it.isCrossDay);
+                    setupTaskDrag(taskEl, task);
                 }
 
                 hourContent.appendChild(taskEl);
@@ -2320,7 +2284,7 @@
             }
 
             // 滚动到当前时间 (仅今天)
-            if (isToday) {
+            if (isToday && scrollToCurrentTime) {
                 setTimeout(() => {
                     const scrollToHour = Math.max(Math.min(currentHour, 22), 6);
                     const currentHourEl = container.querySelector(`[data-hour="${scrollToHour}"]`);
@@ -2331,75 +2295,77 @@
             }
         }
 
-        // 拖拽功能
-        function setupTaskDrag(taskEl, taskId, duration, isCrossDay) {
-            // mousemove/mouseup 在 mousedown 时才注册、mouseup 后即移除，
-            // 避免每次渲染都在 document 上累积监听器
-            taskEl.addEventListener('mousedown', (e) => {
-                if (taskEl.classList.contains('done')) return;
+        function syncMovedTask(task) {
+            allTasks = allTasks.filter(existing => existing.id !== task.id);
+            if (timelineRange(task, currentDate)) allTasks.push(task);
+            renderTaskList();
+            renderTimeline(false);
 
+            // An in-flight date load may already hold a snapshot from before the save.
+            if (pendingDate) switchDate(pendingDate.iso, pendingDate.push);
+        }
+
+        function setupTaskDrag(taskEl, task) {
+            let saving = false;
+            taskEl.addEventListener('mousedown', (e) => {
+                if (e.button !== 0 || saving) return;
                 e.preventDefault();
 
                 const timeline = document.getElementById('timeline');
+                const dragDate = currentDate;
                 const startY = e.clientY;
-                const startTotalMinutes =
-                    (parseInt(taskEl.dataset.startHour) || 0) * 60 +
-                    (parseInt(taskEl.dataset.startMinute) || 0);
-                let currentHour = Math.floor(startTotalMinutes / 60);
-                let currentMinute = startTotalMinutes % 60;
-
-                // 记录原始位置，供失败时恢复
+                const originalStart = Number(taskEl.dataset.dispStart);
+                const originalEnd = Number(taskEl.dataset.dispEnd);
                 const originalParent = taskEl.parentNode;
                 const originalTop = taskEl.style.top;
+                const originalHeight = taskEl.style.height;
+                const expected = { start_time: task.start_time_iso, end_time: task.end_time_iso };
+                let changes = null;
 
-                // 被拖块的显示时长与原始区间：拖拽中实时更新 dataset 触发重排，失败时恢复
-                const origDispStart = parseInt(taskEl.dataset.dispStart, 10);
-                const origDispEnd = parseInt(taskEl.dataset.dispEnd, 10);
-                const dragDispDur = origDispEnd - origDispStart;
-
-                // 提示线随拖拽创建、随拖拽结束销毁，不再在 DOM 中累积
                 const guideLine = document.createElement('div');
                 guideLine.className = 'drag-guide-line';
                 guideLine.innerHTML = '<span class="drag-guide-label"></span>';
                 timeline.appendChild(guideLine);
-
                 taskEl.classList.add('dragging');
                 taskEl.style.transition = 'none';
 
-                function onMove(e) {
-                    const deltaY = e.clientY - startY;
+                function restorePosition() {
+                    originalParent.appendChild(taskEl);
+                    taskEl.style.top = originalTop;
+                    taskEl.style.height = originalHeight;
+                    taskEl.dataset.dispStart = originalStart;
+                    taskEl.dataset.dispEnd = originalEnd;
+                    relayoutTimelineColumns();
+                }
 
-                    // 计算新的时间（原始时间 + 拖拽偏移）
-                    const deltaMinutes = Math.round(deltaY / hourHeight * 60); // 每小时 = hourHeight 像素
-                    let newTotalMinutes = startTotalMinutes + deltaMinutes;
+                function onMove(event) {
+                    if (!taskEl.isConnected || currentDate !== dragDate) return;
+                    const minutes = (event.clientY - startY) / hourHeight * 60;
+                    const snapped = Math.round(minutes / 5) * 5;
+                    const delta = Math.max(Math.ceil(-originalStart),
+                        Math.min(Math.max(0, Math.floor(1439 - originalStart)), snapped));
+                    const start = shiftTaskTime(expected.start_time, delta);
+                    const end = shiftTaskTime(expected.end_time, delta);
+                    const range = timelineRange({ start_time_iso: start, end_time_iso: end }, dragDate);
+                    if (!range) return;
 
-                    // 吸附到5分钟，限制在 00:00 - 23:45
-                    newTotalMinutes = Math.round(newTotalMinutes / 5) * 5;
-                    newTotalMinutes = Math.max(0, Math.min(23 * 60 + 45, newTotalMinutes));
+                    changes = delta ? { start_time: start, end_time: end } : null;
+                    const hour = Math.floor(range.start / 60);
+                    const minute = range.start % 60;
+                    const target = timeline.querySelector(`[data-hour="${hour}"] .hour-content`);
+                    if (!target) return;
 
-                    currentHour = Math.floor(newTotalMinutes / 60);
-                    currentMinute = newTotalMinutes % 60;
-
-                    // 移动任务块到目标小时容器
-                    const targetHourContent = timeline.querySelector(`[data-hour="${currentHour}"] .hour-content`);
-                    if (targetHourContent) {
-                        targetHourContent.appendChild(taskEl);
-                        taskEl.style.top = `${(currentMinute / 60) * hourHeight + 4}px`;
-                    }
-
-                    // 实时更新被拖块区间并重算并行分列（rAF 节流）
-                    taskEl.dataset.dispStart = String(newTotalMinutes);
-                    taskEl.dataset.dispEnd = String(Math.min(newTotalMinutes + dragDispDur, 24 * 60));
+                    target.appendChild(taskEl);
+                    taskEl.style.top = `${minute / 60 * hourHeight + 4}px`;
+                    taskEl.style.height = `${Math.max((range.end - range.start) / 60 * hourHeight - 8, 40)}px`;
+                    taskEl.dataset.dispStart = range.start;
+                    taskEl.dataset.dispEnd = range.end;
                     scheduleRelayout();
 
-                    // 提示线直接贴合任务块实际顶边，
-                    // 不再单独按时间公式计算（两套几何容易不一致产生偏移）
-                    const gridRect = timeline.getBoundingClientRect();
-                    const taskRect = taskEl.getBoundingClientRect();
-                    guideLine.style.top = `${taskRect.top - gridRect.top}px`;
+                    guideLine.style.top = `${taskEl.getBoundingClientRect().top - timeline.getBoundingClientRect().top}px`;
                     guideLine.classList.add('visible');
                     guideLine.querySelector('.drag-guide-label').textContent =
-                        `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`;
+                        `${String(hour).padStart(2, '0')}:${String(Math.floor(minute)).padStart(2, '0')}`;
                 }
 
                 async function onUp() {
@@ -2407,131 +2373,32 @@
                     document.removeEventListener('mouseup', onUp);
                     guideLine.remove();
 
-                    // 停掉拖拽中的实时重排并按最终位置落定一次列布局
-                    if (relayoutRafId !== null) {
-                        cancelAnimationFrame(relayoutRafId);
-                        relayoutRafId = null;
+                    if (!changes || !taskEl.isConnected || currentDate !== dragDate) {
+                        taskEl.classList.remove('dragging');
+                        taskEl.style.transition = '';
+                        return;
                     }
-                    relayoutTimelineColumns();
 
-                    const moved = (currentHour * 60 + currentMinute) !== startTotalMinutes;
-
-                    // 拖动过时，延迟移除 dragging 类以抑制随之而来的 click 打开编辑弹窗
-                    if (moved) {
+                    saving = true;
+                    try {
+                        const response = await fetch(`/task/${task.id}/time`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ ...changes, expected }),
+                        });
+                        const data = await response.json();
+                        if (!response.ok || !data.success) throw new Error(data.error || '无法保存时间');
+                        syncMovedTask(data.task);
+                    } catch (error) {
+                        if (taskEl.isConnected) restorePosition();
+                        alert('调整时间失败: ' + error.message);
+                    } finally {
+                        saving = false;
+                        // Suppress the click generated by releasing a dragged task.
                         setTimeout(() => {
                             taskEl.classList.remove('dragging');
                             taskEl.style.transition = '';
                         }, 0);
-                    } else {
-                        taskEl.classList.remove('dragging');
-                        taskEl.style.transition = '';
-                        return; // 只是点击，未移动，不提交
-                    }
-
-                    // 计算新的开始时间（基于当前浏览的日期，而非永远是今天）
-                    const durationInMinutes = Math.round(duration * 60);
-                    const totalEndMinutes = currentHour * 60 + currentMinute + durationInMinutes;
-
-                    // 计算结束时间和日期
-                    let newEndHour, newEndMinute, endDate;
-                    let newIsCrossDay = false;
-
-                    const viewDate = new Date(currentDate + 'T00:00:00');
-                    const nextViewDate = new Date(viewDate);
-                    nextViewDate.setDate(nextViewDate.getDate() + 1);
-
-                    if (totalEndMinutes >= 24 * 60) {
-                        // 结束时间跨到第二天
-                        newIsCrossDay = true;
-                        const nextDayMinutes = totalEndMinutes - 24 * 60;
-                        newEndHour = Math.floor(nextDayMinutes / 60);
-                        newEndMinute = Math.round((nextDayMinutes % 60) / 5) * 5;
-                        endDate = getLocalDateString(nextViewDate);
-                    } else {
-                        newEndHour = Math.floor(totalEndMinutes / 60);
-                        newEndMinute = Math.round((totalEndMinutes % 60) / 5) * 5;
-                        endDate = currentDate;
-                    }
-
-                    if (newEndMinute >= 60) {
-                        newEndHour += 1;
-                        newEndMinute = 0;
-                    }
-
-                    // 更新服务器
-                    const startTimeStr = `${currentDate}T${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}:00`;
-                    const endTimeStr = `${endDate}T${String(newEndHour).padStart(2, '0')}:${String(newEndMinute).padStart(2, '0')}:00`;
-
-                    try {
-                        const response = await fetch(`/task/${taskId}/time`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                start_time: startTimeStr,
-                                end_time: endTimeStr
-                            })
-                        });
-
-                        const data = await response.json();
-                        if (data.success) {
-                            // 更新任务块的 data 属性（重要！）
-                            taskEl.dataset.startHour = currentHour;
-                            taskEl.dataset.startMinute = currentMinute;
-                            // 提交后的实际区间与实时预览对齐（落定列布局）
-                            taskEl.dataset.dispStart = String(currentHour * 60 + currentMinute);
-                            taskEl.dataset.dispEnd = String(Math.min(totalEndMinutes, 24 * 60));
-                            relayoutTimelineColumns();
-
-                            // 更新时间轴上的显示
-                            const timeRange = newIsCrossDay
-                                ? `${String(currentHour).padStart(2,'0')}:${String(currentMinute).padStart(2,'0')} - 明天 ${String(newEndHour).padStart(2,'0')}:${String(newEndMinute).padStart(2,'0')}`
-                                : `${String(currentHour).padStart(2,'0')}:${String(currentMinute).padStart(2,'0')} - ${String(newEndHour).padStart(2,'0')}:${String(newEndMinute).padStart(2,'0')}`;
-
-                            // 更新时间范围元素
-                            const timeRangeEl = taskEl.querySelector('.task-time-range');
-                            if (timeRangeEl) {
-                                timeRangeEl.textContent = timeRange;
-                            }
-
-                            // 更新任务名元素（添加或移除月亮图标）
-                            const nameEl = taskEl.querySelector('.task-name');
-                            if (nameEl) {
-                                const taskName = nameEl.textContent.replace(' 🌙', '');
-                                nameEl.textContent = taskName + (newIsCrossDay ? ' 🌙' : '');
-                            }
-
-                            // 同步更新左侧任务列表的时间
-                            const sidebarTaskItem = document.querySelector(`.task-item[data-id="${taskId}"]`);
-                            if (sidebarTaskItem) {
-                                const metaEl = sidebarTaskItem.querySelector('.task-meta');
-                                if (metaEl) {
-                                    // 保留标签，更新时间
-                                    const tagEl = metaEl.querySelector('.task-tag');
-                                    const tagHtml = tagEl ? tagEl.outerHTML + ' ' : '';
-                                    metaEl.innerHTML = tagHtml + `<span>${data.time_window || timeRange}</span>`;
-                                }
-                            }
-                        } else {
-                            // 服务器拒绝（如时间校验失败）：恢复原位置
-                            console.error('Time update rejected:', data.error);
-                            if (originalParent) {
-                                originalParent.appendChild(taskEl);
-                                taskEl.style.top = originalTop;
-                                taskEl.dataset.dispStart = String(origDispStart);
-                                taskEl.dataset.dispEnd = String(origDispEnd);
-                                relayoutTimelineColumns();
-                            }
-                        }
-                    } catch (error) {
-                        console.error('Failed to update task time:', error);
-                        // 恢复原位置
-                        if (originalParent) {
-                            originalParent.appendChild(taskEl);
-                            taskEl.style.top = originalTop;
-                            taskEl.dataset.dispStart = String(origDispStart);
-                            taskEl.dataset.dispEnd = String(origDispEnd);
-                            relayoutTimelineColumns();
-                        }
                     }
                 }
 
@@ -2579,15 +2446,11 @@
             document.getElementById('taskReminder').checked = false;
             document.getElementById('customTag').value = '';
 
-            // 重置优先级分段按钮
-            document.getElementById('taskPriority').value = 'medium';
-            document.querySelectorAll('#prioritySegment .priority-opt').forEach(b =>
-                b.classList.toggle('active', b.dataset.value === 'medium'));
+            markSegment('prioritySegment', 'medium');
 
             // 重置标签选择（重建为全未选中的动态标签列表）
             rebuildAddTagOptions();
 
-            // 重置时间为当前时间（向上取整到 5 分钟），并恢复"结束时间跟随开始时间"
             resetAddTimeDefaults();
         }
 
@@ -2606,7 +2469,7 @@
 
             const data = {
                 name: name,
-                priority: document.getElementById('taskPriority').value,
+                priority: segmentValue('prioritySegment'),
                 tags: getSelectedTags(),
                 start_time: startTime,
                 end_time: endTime,
@@ -2643,7 +2506,7 @@
 
         // ========== 编辑任务相关函数 ==========
 
-        let editingTaskId = null;
+        let editingTask = null;
 
         // 初始化编辑弹窗的时间选择器
         function initEditTimePickers() {
@@ -2668,10 +2531,10 @@
         function openEditModal(taskId) {
             const task = allTasks.find(t => t.id === taskId);
             if (!task) return;
-            editingTaskId = taskId;
+            editingTask = task;
 
             document.getElementById('editTaskName').value = task.name;
-            document.getElementById('editTaskPriority').value = task.priority;
+            markSegment('editPrioritySegment', task.priority);
             document.getElementById('editTaskReminder').checked = task.reminder;
 
             // 构建标签（动态标签库 + 该任务自身的标签）
@@ -2685,32 +2548,8 @@
             // 自定义标签输入
             document.getElementById('editCustomTag').value = '';
 
-            // 填充时间
-            if (task.start_time_iso) {
-                const m = task.start_time_iso.match(/(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
-                if (m) {
-                    document.getElementById('editStartDate').value = m[1];
-                    document.getElementById('editStartHour').value = parseInt(m[2]);
-                    document.getElementById('editStartMinute').value = parseInt(m[3]);
-                }
-            } else {
-                document.getElementById('editStartDate').value = '';
-                document.getElementById('editStartHour').value = '0';
-                document.getElementById('editStartMinute').value = '0';
-            }
-
-            if (task.end_time_iso) {
-                const m = task.end_time_iso.match(/(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
-                if (m) {
-                    document.getElementById('editEndDate').value = m[1];
-                    document.getElementById('editEndHour').value = parseInt(m[2]);
-                    document.getElementById('editEndMinute').value = parseInt(m[3]);
-                }
-            } else {
-                document.getElementById('editEndDate').value = '';
-                document.getElementById('editEndHour').value = '0';
-                document.getElementById('editEndMinute').value = '0';
-            }
+            writeEditTime('editStart', task.start_time_iso);
+            writeEditTime('editEnd', task.end_time_iso);
 
             document.getElementById('editModal').classList.add('active');
             document.getElementById('editTaskName').focus();
@@ -2718,66 +2557,83 @@
 
         function closeEditModal() {
             document.getElementById('editModal').classList.remove('active');
-            editingTaskId = null;
+            editingTask = null;
         }
 
         function clearEditTime(which) {
-            if (which === 'start') {
-                document.getElementById('editStartDate').value = '';
-                document.getElementById('editStartHour').value = '0';
-                document.getElementById('editStartMinute').value = '0';
-            } else {
-                document.getElementById('editEndDate').value = '';
-                document.getElementById('editEndHour').value = '0';
-                document.getElementById('editEndMinute').value = '0';
+            writeEditTime(which === 'start' ? 'editStart' : 'editEnd', null);
+        }
+
+        function writeEditTime(prefix, iso) {
+            const time = iso ? splitTaskTime(iso) : { date: '', hour: 0, minute: 0 };
+            document.getElementById(prefix + 'Date').value = time.date;
+            document.getElementById(prefix + 'Hour').value = time.hour;
+            document.getElementById(prefix + 'Minute').value = time.minute;
+        }
+
+        function readEditTime(prefix, original) {
+            const date = document.getElementById(prefix + 'Date').value;
+            if (!date) return null;
+            const value = fmtDateTime(date, document.getElementById(prefix + 'Hour').value,
+                document.getElementById(prefix + 'Minute').value);
+            return original?.slice(0, 16) === value.slice(0, 16) ? original : value;
+        }
+
+        async function saveEditTask() {
+            const task = editingTask;
+            if (!task) return;
+            const name = document.getElementById('editTaskName').value;
+            if (!name.trim()) { alert('请输入任务名称'); return; }
+
+            const original = {
+                name: task.name, priority: task.priority, reminder: task.reminder,
+                start_time: task.start_time_iso, end_time: task.end_time_iso, tags: task.tags,
+            };
+            const selectedTags = new Set(Array.from(
+                document.querySelectorAll('#editTagsContainer .tag-option.selected input'), input => input.value));
+            const oldTags = new Set(task.tags);
+            const tags = [...task.tags.filter(tag => selectedTags.has(tag)),
+                ...[...selectedTags].filter(tag => !oldTags.has(tag))];
+            const values = {
+                name: name === original.name ? name : name.trim(),
+                priority: segmentValue('editPrioritySegment'),
+                reminder: document.getElementById('editTaskReminder').checked,
+                start_time: readEditTime('editStart', original.start_time),
+                end_time: readEditTime('editEnd', original.end_time),
+                tags: tags.length === original.tags.length && tags.every((tag, i) => tag === original.tags[i])
+                    ? original.tags : tags,
+            };
+            const changes = {};
+            const expected = {};
+            for (const [field, value] of Object.entries(values)) {
+                if (value !== original[field]) {
+                    changes[field] = value;
+                    expected[field] = original[field];
+                }
+            }
+            if (!Object.keys(changes).length) {
+                closeEditModal();
+                return;
+            }
+
+            try {
+                const response = await fetch(`/task/${task.id}/edit`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...changes, expected }),
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.error || '无法保存任务');
+                location.reload();
+            } catch (error) {
+                alert('保存失败: ' + error.message);
             }
         }
 
-        function saveEditTask() {
-            if (!editingTaskId) return;
-            const name = document.getElementById('editTaskName').value.trim();
-            if (!name) { alert('请输入任务名称'); return; }
-
-            const startDate = document.getElementById('editStartDate').value;
-            const sh = document.getElementById('editStartHour').value;
-            const sm = document.getElementById('editStartMinute').value;
-            const endDate = document.getElementById('editEndDate').value;
-            const eh = document.getElementById('editEndHour').value;
-            const em = document.getElementById('editEndMinute').value;
-
-            // hour 24 由 fmtDateTime 规范化为次日 00:00
-            const startTime = startDate ? fmtDateTime(startDate, sh, sm) : null;
-            const endTime = endDate ? fmtDateTime(endDate, eh, em) : null;
-
-            // 收集标签
-            const tags = [];
-            document.querySelectorAll('#editTagsContainer .tag-option.selected input').forEach(input => {
-                tags.push(input.value);
-            });
-
-            fetch(`/task/${editingTaskId}/edit`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name: name,
-                    priority: document.getElementById('editTaskPriority').value,
-                    tags: tags,
-                    start_time: startTime,
-                    end_time: endTime,
-                    reminder: document.getElementById('editTaskReminder').checked,
-                })
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) location.reload();
-                else alert('保存失败: ' + data.error);
-            });
-        }
-
         function deleteEditTask() {
-            if (!editingTaskId) return;
+            if (!editingTask) return;
             if (!confirm('确认删除此任务？')) return;
-            fetch(`/task/${editingTaskId}`, { method: 'DELETE' })
+            fetch(`/task/${editingTask.id}`, { method: 'DELETE' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) location.reload();

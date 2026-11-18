@@ -1,8 +1,7 @@
 """Flask web application for TodoList."""
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, jsonify
 from datetime import datetime, date
-from dateutil.relativedelta import relativedelta
 import sys
 import os
 
@@ -10,9 +9,9 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from todo.models import Task, Priority, TaskStatus
-from todo.storage import TaskStorage
+from todo.storage import TaskConflict, TaskNotFound, TaskStorage, TaskStorageError
 from todo.reminder import ReminderService
-from todo.utils import parse_time, format_datetime, format_time_window, get_relative_time
+from todo.utils import parse_time, parse_iso_time, format_datetime, format_time_window, get_relative_time
 
 
 def _format_task(task: Task) -> dict:
@@ -49,10 +48,8 @@ def _format_task(task: Task) -> dict:
 def create_app(storage: TaskStorage = None, start_reminder: bool = True) -> Flask:
     """Create and configure the Flask application.
 
-    start_reminder=True (default) also starts the background reminder
-    thread inside the web process; a cross-process lock in
-    ReminderService prevents duplicates when a standalone
-    `remind --daemon` is already running.
+    start_reminder=True starts a background thread. A cross-process
+    lock serializes its scans with the standalone reminder commands.
     """
     app = Flask(__name__)
     app.secret_key = "todo-secret-key"
@@ -66,6 +63,10 @@ def create_app(storage: TaskStorage = None, start_reminder: bool = True) -> Flas
     if start_reminder:
         app.reminder_service = ReminderService(storage)
         app.reminder_service.start()
+
+    @app.errorhandler(TaskStorageError)
+    def storage_unavailable(error):
+        return jsonify({"error": str(error)}), 503
 
     @app.route("/")
     def index():
@@ -152,12 +153,6 @@ def create_app(storage: TaskStorage = None, start_reminder: bool = True) -> Flas
             except ValueError as e:
                 return jsonify({"error": f"结束时间格式错误: {str(e)}"}), 400
 
-        # 与编辑端点一致的校验：仅要求结束晚于开始，不做自动平移。
-        # Web 界面显式选择日期，用户选过去的时间就是想要过去的时间；
-        # 跨天由用户在日期控件里显式选择。
-        if start_time and end_time and end_time <= start_time:
-            return jsonify({"error": "结束时间必须晚于开始时间"}), 400
-
         task = Task(
             name=name,
             description=data.get("description", ""),
@@ -168,64 +163,58 @@ def create_app(storage: TaskStorage = None, start_reminder: bool = True) -> Flas
             reminder=data.get("reminder", False),
         )
 
-        storage.add_task(task)
+        try:
+            storage.add_task(task)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
 
         return jsonify({"success": True, "id": task.id})
 
+    def parse_task_patch(data, fields, *, original=False):
+        changes = {key: data[key] for key in fields if key in data}
+        if "name" in changes and not original:
+            changes["name"] = str(changes["name"] or "").strip()
+            if not changes["name"]:
+                raise ValueError("任务名称不能为空")
+        if "priority" in changes:
+            if not isinstance(changes["priority"], str):
+                raise ValueError("Invalid priority")
+            changes["priority"] = Priority.from_string(changes["priority"])
+        if "tags" in changes:
+            if isinstance(changes["tags"], str):
+                changes["tags"] = [tag.strip() for tag in changes["tags"].split(",") if tag.strip()]
+            if not isinstance(changes["tags"], list):
+                raise ValueError("tags 必须是数组或逗号分隔字符串")
+        for field in ("start_time", "end_time"):
+            if field in changes:
+                value = changes[field]
+                changes[field] = None if value in (None, "") else parse_iso_time(value)
+        return changes
+
+    def apply_task_patch(task_id, fields, *, require_changes=False):
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            raise ValueError("Invalid JSON body")
+        changes = parse_task_patch(data, fields)
+        if require_changes and not changes:
+            raise ValueError("No time fields provided")
+        original = data.get("expected", {})
+        if not isinstance(original, dict) or original.keys() - changes.keys():
+            raise ValueError("expected 必须只包含正在修改的字段")
+        expected = parse_task_patch(original, fields, original=True)
+        return storage.update_task_fields(task_id, changes, expected=expected)
+
     @app.route("/task/<task_id>/edit", methods=["PUT"])
     def edit_task(task_id):
-        """Edit task properties."""
         try:
-            task = storage.get_task_by_id(task_id)
-        except ValueError as e:
+            task = apply_task_patch(task_id, ("name", "priority", "tags", "reminder", "start_time", "end_time"))
+        except TaskNotFound as e:
+            return jsonify({"error": str(e)}), 404
+        except TaskConflict as e:
             return jsonify({"error": str(e)}), 409
-        if not task:
-            return jsonify({"error": "Task not found"}), 404
-
-        data = request.get_json(silent=True)
-        if data is None:
-            return jsonify({"error": "Invalid JSON body"}), 400
-
-        if "name" in data:
-            name = str(data["name"] or "").strip()
-            if not name:
-                return jsonify({"error": "任务名称不能为空"}), 400
-            task.name = name
-
-        if "priority" in data:
-            try:
-                task.priority = Priority.from_string(data["priority"])
-            except ValueError as e:
-                return jsonify({"error": str(e)}), 400
-
-        if "tags" in data:
-            tags = data["tags"]
-            if isinstance(tags, str):
-                tags = [t.strip() for t in tags.split(",") if t.strip()]
-            if not isinstance(tags, list):
-                return jsonify({"error": "tags 必须是数组或逗号分隔字符串"}), 400
-            task.tags = tags
-
-        if "reminder" in data:
-            task.reminder = data["reminder"]
-
-        if "start_time" in data or "end_time" in data:
-            # Keys are independent: present key updates (empty clears),
-            # absent key keeps the existing value.
-            new_start, new_end = task.start_time, task.end_time
-            try:
-                if "start_time" in data:
-                    new_start = datetime.fromisoformat(data["start_time"]) if data["start_time"] else None
-                if "end_time" in data:
-                    new_end = datetime.fromisoformat(data["end_time"]) if data["end_time"] else None
-            except ValueError:
-                return jsonify({"error": "Invalid datetime format (expect ISO 8601)"}), 400
-            if new_start and new_end and new_end <= new_start:
-                return jsonify({"error": "结束时间必须晚于开始时间"}), 400
-            task.start_time, task.end_time = new_start, new_end
-
-        storage.update_task(task)
-        return jsonify({"success": True})
+        except (ValueError, TypeError, OverflowError) as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"success": True, "task": _format_task(task)})
 
     @app.route("/task/<task_id>/done", methods=["POST"])
     def mark_done(task_id):
@@ -281,43 +270,17 @@ def create_app(storage: TaskStorage = None, start_reminder: bool = True) -> Flas
     def update_task_time(task_id):
         """Update task start and end time."""
         try:
-            task = storage.get_task_by_id(task_id)
-        except ValueError as e:
+            task = apply_task_patch(task_id, ("start_time", "end_time"), require_changes=True)
+        except TaskNotFound as e:
+            return jsonify({"error": str(e)}), 404
+        except TaskConflict as e:
             return jsonify({"error": str(e)}), 409
-        if not task:
-            return jsonify({"error": "Task not found"}), 404
-
-        data = request.get_json(silent=True)
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-
-        # Update start_time if provided
-        if "start_time" in data:
-            if data["start_time"]:
-                try:
-                    task.start_time = datetime.fromisoformat(data["start_time"])
-                except ValueError:
-                    return jsonify({"error": "Invalid start_time format"}), 400
-            else:
-                task.start_time = None
-
-        # Update end_time if provided
-        if "end_time" in data:
-            if data["end_time"]:
-                try:
-                    task.end_time = datetime.fromisoformat(data["end_time"])
-                except ValueError:
-                    return jsonify({"error": "Invalid end_time format"}), 400
-            else:
-                task.end_time = None
-
-        if task.start_time and task.end_time and task.end_time <= task.start_time:
-            return jsonify({"error": "结束时间必须晚于开始时间"}), 400
-
-        storage.update_task(task)
+        except (ValueError, TypeError, OverflowError) as e:
+            return jsonify({"error": str(e)}), 400
 
         return jsonify({
             "success": True,
+            "task": _format_task(task),
             "start_time": task.start_time.isoformat() if task.start_time else None,
             "end_time": task.end_time.isoformat() if task.end_time else None,
             "time_window": format_time_window(task.start_time, task.end_time),

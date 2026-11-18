@@ -9,7 +9,8 @@ import threading
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from typing import Callable
-from .models import Task, Priority, TaskStatus
+from .models import Task, Priority, TaskStatus, generate_short_id
+from .utils import normalize_local_time, validate_time_window
 
 
 # --- OS-level file lock helpers (dependency-free, cross-platform) ---
@@ -37,6 +38,18 @@ else:
         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
+class TaskStorageError(RuntimeError):
+    """The task file cannot be safely recovered."""
+
+
+class TaskNotFound(ValueError):
+    """The requested task no longer exists."""
+
+
+class TaskConflict(ValueError):
+    """The requested update no longer matches the stored task."""
+
+
 class TaskStorage:
     """JSON-based task storage."""
 
@@ -47,8 +60,9 @@ class TaskStorage:
             file_path = project_root / "data" / "tasks.json"
 
         self.file_path = Path(file_path)
+        self._backup_path = self.file_path.with_suffix(".json.bak")
         self._rlock = threading.RLock()
-        self._lock_depth = 0
+        self._has_file_lock = False
         self._ensure_file_exists()
 
     @contextlib.contextmanager
@@ -61,73 +75,88 @@ class TaskStorage:
         public methods may call each other (e.g. mark_done ->
         get_task_by_id -> update_task) without deadlocking.
         """
-        self._rlock.acquire()
-        self._lock_depth += 1
-        fh = None
-        try:
-            if self._lock_depth == 1:
-                fh = open(self.file_path.with_suffix(".json.lock"), "a+b")
+        with self._rlock:
+            if self._has_file_lock:
+                yield
+                return
+
+            with open(self.file_path.with_suffix(".json.lock"), "a+b") as fh:
                 _os_lock(fh)
-            yield
-        finally:
-            self._lock_depth -= 1
-            if fh is not None:
+                self._has_file_lock = True
                 try:
-                    _os_unlock(fh)
+                    yield
                 finally:
-                    fh.close()
-            self._rlock.release()
+                    self._has_file_lock = False
+                    _os_unlock(fh)
 
     def _ensure_file_exists(self):
         """Ensure the storage file exists."""
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         with self._locked():
-            if not self.file_path.exists():
+            if not self.file_path.exists() and not self._backup_path.exists():
                 self._write_tasks([])
 
+    @staticmethod
+    def _load_tasks_file(path: Path) -> list[dict]:
+        """Validate the JSON structure and records before trusting a file."""
+        with path.open(encoding="utf-8") as fh:
+            try:
+                records = json.load(fh)
+                if not isinstance(records, list):
+                    raise ValueError("expected a list of tasks")
+                for record in records:
+                    if not isinstance(record, dict):
+                        raise ValueError("expected a task object")
+                    if not isinstance(record.get("id"), str) or not isinstance(record.get("name"), str):
+                        raise ValueError("tasks require a string ID and name")
+                    Task.from_dict(record)
+            except (ValueError, TypeError, OverflowError) as error:
+                raise TaskStorageError(f"无法读取任务文件 {path}: {error}") from error
+        return records
+
     def _read_tasks(self) -> list[dict]:
-        """Read tasks from JSON file.
-
-        On corruption: archive the damaged file, try to recover from the
-        .bak backup, and only fall back to an empty list with a loud
-        warning if no backup is usable.
-        """
+        """Recover a missing or damaged task file from a validated backup."""
+        damaged = False
         try:
-            with open(self.file_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            return self._load_tasks_file(self.file_path)
         except FileNotFoundError:
-            return []
-        except json.JSONDecodeError:
-            corrupt = self.file_path.with_suffix(
-                f".corrupt-{datetime.now():%Y%m%d-%H%M%S}.json")
-            shutil.copy2(self.file_path, corrupt)
-            bak = self.file_path.with_suffix(".json.bak")
-            if bak.exists():
-                try:
-                    with open(bak, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    print(f"[警告] 数据文件损坏，已从备份恢复（损坏文件已保存: {corrupt.name}）")
-                    return data
-                except (json.JSONDecodeError, OSError):
-                    pass
-            print(f"[警告] 数据文件损坏且无可用备份，已返回空列表（损坏文件: {corrupt.name}）")
-            return []
+            pass
+        except TaskStorageError:
+            damaged = True
 
-    def _write_tasks(self, tasks: list[dict]):
-        """Write tasks to JSON file atomically.
+        try:
+            tasks = self._load_tasks_file(self._backup_path)
+        except (TaskStorageError, FileNotFoundError) as error:
+            raise TaskStorageError(f"任务文件不可用且无有效备份，已停止写入: {self.file_path}") from error
 
-        Writes to a temp file first, backs up the current good file as
-        .bak, then replaces the target so a crash mid-write never leaves
-        a truncated main file.
-        """
-        tmp_path = self.file_path.with_suffix(".json.tmp")
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(tasks, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        if self.file_path.exists():
-            shutil.copy2(self.file_path, self.file_path.with_suffix(".json.bak"))
-        os.replace(tmp_path, self.file_path)
+        message = "[警告] 任务数据已从备份恢复"
+        if damaged:
+            modified = self.file_path.stat().st_mtime_ns
+            archive = self.file_path.with_suffix(f".corrupt-{modified}.json")
+            if not archive.exists():
+                shutil.copy2(self.file_path, archive)
+            message += f"（损坏文件已保存: {archive.name}）"
+        self._replace_tasks(self.file_path, tasks)
+        print(message)
+        return tasks
+
+    @staticmethod
+    def _replace_tasks(path: Path, tasks: list[dict]) -> None:
+        tmp_path = path.with_name(path.name + ".tmp")
+        try:
+            with tmp_path.open("w", encoding="utf-8") as fh:
+                json.dump(tasks, fh, ensure_ascii=False, indent=2)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def _write_tasks(self, tasks: list[dict], previous: list[dict] | None = None) -> None:
+        """Rotate a validated snapshot into the backup before committing."""
+        if previous is not None:
+            self._replace_tasks(self._backup_path, previous)
+        self._replace_tasks(self.file_path, tasks)
 
     def get_all_tasks(self) -> list[Task]:
         """Get all tasks."""
@@ -135,27 +164,27 @@ class TaskStorage:
             tasks_data = self._read_tasks()
         return [Task.from_dict(data) for data in tasks_data]
 
-    def _find_by_prefix(self, task_id: str) -> Task | None:
-        """Find a task by ID or unique prefix.
-
-        Exact match wins. Returns None if no match; raises ValueError
-        if the prefix matches multiple tasks.
-        """
-        tasks = self.get_all_tasks()
-        for t in tasks:
-            if t.id == task_id:
-                return t
-        matching = [t for t in tasks if t.id.startswith(task_id)]
+    @staticmethod
+    def _find_index(tasks: list[dict], task_id: str, exact: bool = False) -> int | None:
+        for index, task in enumerate(tasks):
+            if task["id"] == task_id:
+                return index
+        if exact:
+            return None
+        matching = [index for index, task in enumerate(tasks) if task["id"].startswith(task_id)]
         if len(matching) == 1:
             return matching[0]
         if len(matching) > 1:
-            raise ValueError(
-                f"ID '{task_id}' matches multiple tasks: {[t.id for t in matching]}")
+            raise TaskConflict(
+                f"ID '{task_id}' matches multiple tasks: {[tasks[index]['id'] for index in matching]}")
         return None
 
     def get_task_by_id(self, task_id: str) -> Task | None:
         """Get a task by ID (supports prefix matching)."""
-        return self._find_by_prefix(task_id)
+        with self._locked():
+            tasks = self._read_tasks()
+            index = self._find_index(tasks, task_id)
+            return Task.from_dict(tasks[index]) if index is not None else None
 
     def get_tasks_for_date(self, target_date: date) -> list[Task]:
         """Get tasks belonging to a specific date.
@@ -167,9 +196,11 @@ class TaskStorage:
 
         This is the single source of truth shared by CLI and web.
         """
+        day_start = datetime.combine(target_date, datetime.min.time())
+
         def belongs(task: Task) -> bool:
             if task.start_time and task.end_time:
-                return task.start_time.date() <= target_date <= task.end_time.date()
+                return task.start_time.date() <= target_date and task.end_time > day_start
             if task.start_time:
                 return task.start_time.date() == target_date
             if task.end_time:
@@ -206,25 +237,27 @@ class TaskStorage:
 
         return result
 
-    def postpone_task(self, task_id: str, minutes: int) -> Task:
+    def postpone_task(self, task_id: str, minutes: int, *, expected_start: datetime | None = None) -> Task:
         """Shift a task later by minutes, keeping its duration.
 
         Both start_time and end_time move together (whichever exist) and
         the reminder flag is reset so the reminder re-fires around the
         new start time.
         """
-        with self._locked():
-            task = self.get_task_by_id(task_id)
-            if task is None:
-                raise ValueError(f"Task not found: {task_id}")
-
+        def changes(task: Task) -> dict:
+            if expected_start is not None and (
+                task.start_time != expected_start or not task.reminder or task.status == TaskStatus.DONE
+            ):
+                raise TaskConflict("任务的提醒计划已变更")
             delta = timedelta(minutes=minutes)
-            if task.start_time:
-                task.start_time += delta
-            if task.end_time:
-                task.end_time += delta
-            task.reminded = False
-            return self.update_task(task)
+            updates = {"reminded": False}
+            for field in ("start_time", "end_time"):
+                value = getattr(task, field)
+                if value is not None:
+                    updates[field] = value + delta
+            return updates
+
+        return self.update_task_fields(task_id, changes, exact=expected_start is not None)
 
     def add_task(self, task: Task) -> Task:
         """Add a new task."""
@@ -234,25 +267,64 @@ class TaskStorage:
             # Ensure unique ID
             existing_ids = {t["id"] for t in tasks}
             while task.id in existing_ids:
-                task.id = Task().id  # Generate new ID
+                task.id = generate_short_id()
 
-            tasks.append(task.to_dict())
-            self._write_tasks(tasks)
+            task.start_time = normalize_local_time(task.start_time)
+            task.end_time = normalize_local_time(task.end_time)
+            validate_time_window(task.start_time, task.end_time)
+            self._write_tasks([*tasks, task.to_dict()], tasks)
         return task
 
     def update_task(self, task: Task) -> Task:
-        """Update an existing task."""
+        """Replace an entire task by its exact ID. For edits, use update_task_fields."""
         with self._locked():
             tasks = self._read_tasks()
-            task.update_timestamp()
+            index = self._find_index(tasks, task.id, exact=True)
+            if index is None:
+                raise TaskNotFound(f"Task not found: {task.id}")
+            return self._save_task(tasks, index, task)
 
-            for i, t in enumerate(tasks):
-                if t["id"] == task.id:
-                    tasks[i] = task.to_dict()
-                    self._write_tasks(tasks)
-                    return task
+    def _save_task(self, records: list[dict], index: int, task: Task) -> Task:
+        task.update_timestamp()
+        updated = records.copy()
+        updated[index] = task.to_dict()
+        self._write_tasks(updated, records)
+        return task
 
-        raise ValueError(f"Task not found: {task.id}")
+    def update_task_fields(
+        self,
+        task_id: str,
+        changes: dict | Callable[[Task], dict],
+        *,
+        expected: dict | None = None,
+        exact: bool = False,
+    ) -> Task:
+        """Apply a patch against the current task in one storage transaction."""
+        with self._locked():
+            records = self._read_tasks()
+            index = self._find_index(records, task_id, exact=exact)
+            if index is None:
+                raise TaskNotFound(f"Task not found: {task_id}")
+            task = Task.from_dict(records[index])
+            for field, value in (expected or {}).items():
+                if getattr(task, field) != value:
+                    raise TaskConflict("任务已被修改，请刷新后重试")
+
+            updates = changes(task) if callable(changes) else changes
+            original_start, original_end, was_enabled = task.start_time, task.end_time, task.reminder
+            changed = False
+            for field, value in updates.items():
+                if field in ("start_time", "end_time"):
+                    value = normalize_local_time(value)
+                if value != getattr(task, field):
+                    setattr(task, field, value)
+                    changed = True
+
+            if task.start_time != original_start or task.end_time != original_end:
+                validate_time_window(task.start_time, task.end_time)
+            if task.start_time != original_start or (task.reminder and not was_enabled):
+                task.reminded = False
+            return self._save_task(records, index, task) if changed else task
 
     def delete_task(self, task_id: str) -> bool:
         """Delete a single task by ID or unique prefix.
@@ -261,40 +333,32 @@ class TaskStorage:
         tasks) instead of silently deleting them all.
         """
         with self._locked():
-            task = self._find_by_prefix(task_id)
-            if task is None:
+            tasks = self._read_tasks()
+            index = self._find_index(tasks, task_id)
+            if index is None:
                 return False
 
-            tasks = [t for t in self._read_tasks() if t["id"] != task.id]
-            self._write_tasks(tasks)
+            self._write_tasks(tasks[:index] + tasks[index + 1:], tasks)
         return True
 
     def mark_done(self, task_id: str) -> Task:
         """Mark a task as done."""
-        with self._locked():
-            task = self.get_task_by_id(task_id)
-            if task:
-                task.status = TaskStatus.DONE
-                return self.update_task(task)
-        raise ValueError(f"Task not found: {task_id}")
+        return self.update_task_fields(task_id, {"status": TaskStatus.DONE})
 
     def mark_doing(self, task_id: str) -> Task:
         """Mark a task as in progress."""
-        with self._locked():
-            task = self.get_task_by_id(task_id)
-            if task:
-                task.status = TaskStatus.DOING
-                return self.update_task(task)
-        raise ValueError(f"Task not found: {task_id}")
+        return self.update_task_fields(task_id, {"status": TaskStatus.DOING})
 
-    def mark_reminded(self, task_id: str) -> Task:
+    def mark_reminded(self, task_id: str, *, expected_start: datetime | None = None) -> Task:
         """Mark a task as reminded."""
-        with self._locked():
-            task = self.get_task_by_id(task_id)
-            if task:
-                task.reminded = True
-                return self.update_task(task)
-        raise ValueError(f"Task not found: {task_id}")
+        def changes(task: Task) -> dict:
+            if expected_start is not None and (
+                task.start_time != expected_start or not task.reminder or task.status == TaskStatus.DONE
+            ):
+                raise TaskConflict("任务的提醒计划已变更")
+            return {"reminded": True}
+
+        return self.update_task_fields(task_id, changes, exact=expected_start is not None)
 
     def filter_tasks(
         self,

@@ -5,7 +5,7 @@ import sys
 import threading
 
 from .models import Task
-from .storage import TaskStorage
+from .storage import TaskConflict, TaskNotFound, TaskStorage
 from .utils import format_time_window
 
 # 通知按钮的推迟选项：(分钟数, 按钮文案)
@@ -63,10 +63,8 @@ class ReminderService:
         self.storage = storage
         self.ahead_minutes = ahead_minutes
         self.check_interval = check_interval
-        self._running = False
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
-        self._lock_fh = None  # 提醒互斥锁文件句柄，持有期间本进程独占提醒
 
     def _send_interactive_toast(self, task: Task) -> None:
         """Send a toast with postpone buttons (requires windows-toasts).
@@ -90,7 +88,7 @@ class ReminderService:
                 return
             try:
                 minutes = int(args.arguments.split("=", 1)[1])
-                postponed = self.storage.postpone_task(task.id, minutes)
+                postponed = self.storage.postpone_task(task.id, minutes, expected_start=task.start_time)
             except Exception as e:
                 print(f"推迟任务失败: {e}")
                 return
@@ -139,21 +137,38 @@ class ReminderService:
 
             except Exception as e:
                 print(f"发送通知失败: {e}")
-                return  # transient error: leave unmarked, retry next cycle
+                return False
 
         except Exception as e:
             print(f"发送通知失败: {e}")
-            return  # transient error: leave unmarked, retry next cycle
+            return False
 
-        # Mark as reminded
-        self.storage.mark_reminded(task.id)
+        try:
+            self.storage.mark_reminded(task.id, expected_start=task.start_time)
+        except (TaskConflict, TaskNotFound):
+            # Keep a newer schedule eligible even if the old toast was sent.
+            pass
+        return True
 
-    def _check_and_notify(self):
-        """Check tasks and send notifications."""
-        pending_tasks = self.storage.get_pending_reminders(self.ahead_minutes)
+    def _check_and_notify(self, *, verbose: bool = False):
+        """Give one process ownership of the current reminder scan."""
+        lock_path = self.storage.file_path.with_suffix(".json.remindlock")
+        with open(lock_path, "a+b") as fh:
+            if not _try_reminder_lock(fh):
+                if verbose:
+                    print("[提醒] 其他进程正在检查提醒")
+                return
 
-        for task in pending_tasks:
-            self._send_notification(task)
+            pending_tasks = self.storage.get_pending_reminders(self.ahead_minutes)
+            if verbose:
+                if pending_tasks:
+                    print(f"发现 {len(pending_tasks)} 个需要提醒的任务:")
+                else:
+                    print("暂无需要提醒的任务")
+
+            for task in pending_tasks:
+                if self._send_notification(task) and verbose:
+                    print(f"  - {task.name} [{task.id}]")
 
     def _run_loop(self):
         """Main loop for background checking."""
@@ -167,69 +182,25 @@ class ReminderService:
             self._stop_event.wait(self.check_interval)
 
     def start(self):
-        """Start the reminder service in background.
-
-        Acquires a cross-process lock first: if another reminder service
-        is already running (e.g. a standalone `remind --daemon` alongside
-        the web server), this instance stays idle instead of producing
-        duplicate notifications.
-        """
-        if self._running:
-            return
-
-        lock_path = self.storage.file_path.with_suffix(".json.remindlock")
-        self._lock_fh = open(lock_path, "a+b")
-        if not _try_reminder_lock(self._lock_fh):
-            self._lock_fh.close()
-            self._lock_fh = None
-            print("[提醒] 其他提醒服务已在运行，本进程不重复启动提醒线程")
+        """Start periodic scans so this process can take over any later cycle."""
+        if self.is_running():
             return
 
         self._stop_event.clear()
-        self._running = True
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
         print(f"[提醒] 提醒线程已启动 (检查间隔 {self.check_interval}s, 开始后宽限 {self.ahead_minutes} 分钟)")
 
     def stop(self):
         """Stop the reminder service."""
-        self._running = False
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=5)
-            self._thread = None
-        if self._lock_fh:
-            try:
-                if sys.platform == "win32":
-                    self._lock_fh.seek(0)
-                    import msvcrt
-                    msvcrt.locking(self._lock_fh.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(self._lock_fh.fileno(), fcntl.LOCK_UN)
-            except OSError:
-                pass  # 进程退出时 OS 会释放锁
-            finally:
-                self._lock_fh.close()
-                self._lock_fh = None
 
     def run_once(self):
         """Run a single check (for CLI command)."""
-        pending_tasks = self.storage.get_pending_reminders(self.ahead_minutes)
-
-        if not pending_tasks:
-            print("暂无需要提醒的任务")
-            return
-
-        print(f"发现 {len(pending_tasks)} 个需要提醒的任务:")
-        for task in pending_tasks:
-            self._send_notification(task)
-            print(f"  - {task.name} [{task.id}]")
+        self._check_and_notify(verbose=True)
 
     def is_running(self) -> bool:
         """Check if service is running (thread actually alive)."""
-        return (
-            self._running
-            and self._thread is not None
-            and self._thread.is_alive()
-        )
+        return self._thread is not None and self._thread.is_alive()
