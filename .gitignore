@@ -6,6 +6,8 @@ venv/
 .env
 .vscode/
 .claude/
+build/
+dist/
 data/*.lock
 data/*.remindlock
 

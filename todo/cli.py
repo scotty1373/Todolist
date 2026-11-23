@@ -21,7 +21,7 @@ def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser for CLI."""
     parser = argparse.ArgumentParser(
         prog="todo",
-        description="TodoList - A CLI and Web based task management tool",
+        description="TodoList - 任务管理、桌面执行与日程",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -45,7 +45,7 @@ def create_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser("list", aliases=["ls", "l"], help="List tasks")
     list_parser.add_argument("--all", action="store_true", help="Show all tasks, not just today")
     list_parser.add_argument("--tag", help="Filter by tag")
-    list_parser.add_argument("--status", choices=["pending", "doing", "done"], help="Filter by status")
+    list_parser.add_argument("--status", choices=[status.value for status in TaskStatus], help="Filter by status")
     list_parser.add_argument("--priority", choices=["high", "medium", "low"], help="Filter by priority")
 
     # done command
@@ -53,8 +53,11 @@ def create_parser() -> argparse.ArgumentParser:
     done_parser.add_argument("id", help="Task ID (or prefix)")
 
     # start command
-    start_parser = subparsers.add_parser("start", help="Mark task as in progress")
+    start_parser = subparsers.add_parser("start", help="Switch execution to this task")
     start_parser.add_argument("id", help="Task ID (or prefix)")
+
+    interrupt_parser = subparsers.add_parser("interrupt", help="Interrupt execution of a task")
+    interrupt_parser.add_argument("id", help="Task ID (or prefix)")
 
     # delete command
     delete_parser = subparsers.add_parser("delete", aliases=["del", "rm"], help="Delete a task")
@@ -80,6 +83,7 @@ def create_parser() -> argparse.ArgumentParser:
     web_parser = subparsers.add_parser("web", help="Start web interface")
     web_parser.add_argument("-p", "--port", type=int, default=5000, help="Port number (default: 5000)")
     web_parser.add_argument("--host", default="127.0.0.1", help="Host address (default: 127.0.0.1)")
+    subparsers.add_parser("desktop", help="Open the native Windows task window")
 
     # clear command
     clear_parser = subparsers.add_parser("clear", help="Clear completed tasks")
@@ -149,12 +153,6 @@ def cmd_list(args, storage: TaskStorage):
     table.add_column("剩余时间")
 
     for task in tasks:
-        status_icons = {
-            TaskStatus.PENDING: "⬜",
-            TaskStatus.DOING: "🔄",
-            TaskStatus.DONE: "✅",
-        }
-
         # Determine remaining time
         remaining = ""
         if task.end_time and task.status != TaskStatus.DONE:
@@ -169,7 +167,7 @@ def cmd_list(args, storage: TaskStorage):
 
         table.add_row(
             task.id,
-            status_icons[task.status],
+            task.status.icon,
             task.priority.stars,
             task.name + reminder_str,
             tags_str,
@@ -194,6 +192,14 @@ def cmd_start(args, storage: TaskStorage):
     try:
         task = storage.mark_doing(args.id)
         console.print(f"[green]✓[/green] 开始任务: {task.name} [{task.id}]")
+    except ValueError as e:
+        console.print(f"[red]错误: {e}[/red]")
+
+
+def cmd_interrupt(args, storage: TaskStorage):
+    try:
+        task = storage.interrupt_task(args.id)
+        console.print(f"[yellow]已中断任务: {task.name} [{task.id}][/yellow]")
     except ValueError as e:
         console.print(f"[red]错误: {e}[/red]")
 
@@ -287,6 +293,12 @@ def cmd_web(args, storage: TaskStorage):
     app.run(host=args.host, port=args.port, debug=False)
 
 
+def cmd_desktop(args, storage: TaskStorage):
+    from .desktop import run_desktop
+
+    run_desktop(storage)
+
+
 def cmd_clear(args, storage: TaskStorage):
     """Handle clear command."""
     tasks = storage.get_all_tasks()
@@ -321,12 +333,14 @@ def run_cli(args=None):
         "done": cmd_done,
         "d": cmd_done,
         "start": cmd_start,
+        "interrupt": cmd_interrupt,
         "delete": cmd_delete,
         "del": cmd_delete,
         "rm": cmd_delete,
         "edit": cmd_edit,
         "remind": cmd_remind,
         "web": cmd_web,
+        "desktop": cmd_desktop,
         "clear": cmd_clear,
     }
 

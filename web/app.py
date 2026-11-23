@@ -16,12 +16,6 @@ from todo.utils import parse_time, parse_iso_time, format_datetime, format_time_
 
 def _format_task(task: Task) -> dict:
     """Format a task object into a dict for JSON response."""
-    status_icons = {
-        TaskStatus.PENDING: "⬜",
-        TaskStatus.DOING: "🔄",
-        TaskStatus.DONE: "✅",
-    }
-
     remaining = ""
     if task.end_time and task.status != TaskStatus.DONE:
         remaining = get_relative_time(task.end_time)
@@ -33,7 +27,7 @@ def _format_task(task: Task) -> dict:
         "priority": task.priority.value,
         "priority_stars": task.priority.stars,
         "status": task.status.value,
-        "status_icon": status_icons[task.status],
+        "status_icon": task.status.icon,
         "tags": task.tags,
         "start_time": format_datetime(task.start_time) if task.start_time else None,
         "end_time": format_datetime(task.end_time) if task.end_time else None,
@@ -72,6 +66,8 @@ def create_app(storage: TaskStorage = None, start_reminder: bool = True) -> Flas
     def index():
         """Main page showing today's tasks."""
         target_date = date.today()
+        initial_task = None
+        task_id = request.args.get("task")
         try:
             date_str = request.args.get("date")
             if date_str:
@@ -79,12 +75,21 @@ def create_app(storage: TaskStorage = None, start_reminder: bool = True) -> Flas
         except ValueError:
             target_date = date.today()
 
+        if task_id:
+            initial_task = storage.get_task_by_id(task_id, exact=True)
+            if initial_task is None:
+                return jsonify({"error": "未找到对应任务"}), 404
+            target_date = (initial_task.start_time or initial_task.end_time or initial_task.created_at).date()
+
         # Filter and format tasks for the target date
         filtered = storage.get_tasks_for_date(target_date)
         filtered = storage.sort_tasks(filtered)
         formatted_tasks = [_format_task(t) for t in filtered]
 
-        return render_template("index.html", tasks=formatted_tasks, current_date=target_date.isoformat())
+        return render_template(
+            "index.html", tasks=formatted_tasks, current_date=target_date.isoformat(),
+            initial_task_id=initial_task.id if initial_task else None,
+        )
 
     @app.route("/api/tasks/<date_str>")
     def get_tasks_by_date(date_str):
@@ -229,8 +234,10 @@ def create_app(storage: TaskStorage = None, start_reminder: bool = True) -> Flas
     def mark_doing(task_id):
         """Mark a task as in progress."""
         try:
-            task = storage.mark_doing(task_id)
+            task = storage.mark_doing(task_id, allow_completed=False)
             return jsonify({"success": True, "task": task.name})
+        except TaskConflict as e:
+            return jsonify({"error": str(e)}), 409
         except ValueError as e:
             return jsonify({"error": str(e)}), 404
 
@@ -238,7 +245,7 @@ def create_app(storage: TaskStorage = None, start_reminder: bool = True) -> Flas
     def delete_task(task_id):
         """Delete a task."""
         try:
-            deleted = storage.delete_task(task_id)
+            deleted = storage.delete_task(task_id, exact=True)
         except ValueError as e:
             return jsonify({"error": str(e)}), 409
         if deleted:
